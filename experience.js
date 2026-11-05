@@ -7,7 +7,7 @@
   const isTraining=x=>x&&x.stato==="completato";
   const uniqueCompleted=()=>{const m=new Map();for(const x of state.tables.Allenamenti.filter(isTraining))m.set(x.data,x);return[...m.values()]};
   const lastDays=(count=7)=>Array.from({length:count},(_,i)=>shiftDate(localDate(),i-count+1));
-  const mSteps=()=>{const map=new Map();for(const x of state.tables.Misure||[])if(n(x.passi_giornalieri)>0)map.set(x.data,Math.max(n(x.passi_giornalieri),n(map.get(x.data)?.passi_giornalieri)));return map};
+  const mSteps=()=>{const map=new Map();for(const x of state.tables.Misure||[])if(n(x.passi_giornalieri)>0)map.set(x.data,Math.max(n(x.passi_giornalieri),n(map.get(x.data))));return map};
   function aggregates(){
     const today=localDate(),week=weekStart(today),days=mondayDates(today);
     const done=uniqueCompleted(),weekDone=done.filter(x=>days.includes(x.data));
@@ -30,8 +30,18 @@
   }
   function makeXp(){
     const workouts=uniqueCompleted(),steps=mSteps(),start=String(cfg("data_inizio")||"2026-11-02"),nowDay=localDate();
-    let total=0,why={training:0,cardio:0,steps:0,nutrition:0,week:0,month:0}, completed=new Set(workouts.map(x=>x.data));
+    let total=0,why={training:0,exercises:0,cardio:0,steps:0,nutrition:0,week:0,month:0}, completed=new Set(workouts.map(x=>x.data));
     for(const x of workouts){if(x.data<start||x.data>nowDay)continue;total+=70;why.training+=70;if(n(x.durata_cardio_min)>=30){total+=15;why.cardio+=15;}}
+    const exercisesByDate=new Map();
+    for(const e of state.tables.Esercizi||[]){
+      if(String(e.completato)!=="true"||!e.data||e.data<start||e.data>nowDay)continue;
+      if(!exercisesByDate.has(e.data))exercisesByDate.set(e.data,new Set());
+      exercisesByDate.get(e.data).add(e.esercizio);
+    }
+    for(const ids of exercisesByDate.values()){
+      const points=Math.min(30,ids.size*3);
+      total+=points;why.exercises+=points;
+    }
     for(const [date,value] of steps){if(date>=start&&date<=nowDay&&value>=(n(cfg("passi_giorno"))||12000)){total+=20;why.steps+=20;}}
     const nutritionDates=new Set((state.tables.Nutrizione||[]).filter(x=>x.data>=start&&x.data<=nowDay&&x.qualita!=="eliminato").map(x=>x.data));
     for(const date of nutritionDates){const eaten=totals(date),goal=targetsFor(date);if(eaten.kcal>=goal.kcal*.6&&eaten.proteine>=goal.proteine*.8){total+=15;why.nutrition+=15;}if(eaten.kcal>=goal.kcal*.6&&eaten.fibre>=25){total+=10;why.nutrition+=10;}if(eaten.kcal>=goal.kcal*.85&&eaten.kcal<=goal.kcal*1.15&&eaten.proteine>=goal.proteine*.8){total+=15;why.nutrition+=15;}}
@@ -157,10 +167,20 @@
   renderNutrition=function(){
     return '<div class="cx-section-lead"><div><span class="cx-kicker">Diario CUT30</span><h2>Pasti e obiettivi</h2><p>Registra i pasti, confronta i nutrienti e importa le registrazioni aggiunte da ChatGPT.</p></div><button data-cut-refresh class="cx-ghost-action">'+icon("refresh")+' Aggiorna dal cloud</button></div>'+nativeNutrition();
   };
+  function xpCard(){
+    const xp=makeXp();
+    const entries=[
+      ["Allenamenti",xp.why.training],["Esercizi spuntati",xp.why.exercises],
+      ["Cardio",xp.why.cardio],["Obiettivi passi",xp.why.steps],
+      ["Alimentazione",xp.why.nutrition],["Bonus settimanali",xp.why.week],
+      ["Bonus mensili",xp.why.month]
+    ];
+    return '<section class="cx-card cx-xp-detail"><div class="cx-head"><div><span class="cx-kicker">Progressione personale</span><h2>Come guadagni XP</h2></div><span class="cx-count">Livello '+xp.level+'</span></div><div class="cx-xp-breakdown">'+entries.map(x=>'<div><span>'+x[0]+'</span><strong>'+tFmt(x[1])+' XP</strong></div>').join('')+'</div><p class="cx-disclaimer">70 XP per sessione completata, fino a 30 XP per spunte di esercizi, 15 XP per cardio di almeno 30 minuti, bonus per passi e obiettivi nutrizionali raggiunti senza deficit eccessivi. Ulteriori bonus a settimana e mese completati. Punti ricalcolati dalle registrazioni uniche, senza duplicazioni.</p></section>';
+  }
   renderProgress=function(){
     const a=aggregates(),base=nativeProgress();
     const legend=base.replace(/<span class="tiny" style="min-width:45px;text-align:right">(\d+)\/(\d+)<\/span>/g,function(_,done,planned){return '<span class="tiny cx-percent" style="min-width:45px;text-align:right">'+(Number(planned)?Math.round(100*Number(done)/Number(planned)):0)+'%</span>';});
-    return '<div class="cx-section-lead"><div><span class="cx-kicker">Analisi dell’attività</span><h2>Progressi misurabili</h2><p>Radar attività, peso corporeo e distribuzione del volume di lavoro muscolare.</p></div></div>'+radarCard(a)+legend;
+    return '<div class="cx-section-lead"><div><span class="cx-kicker">Analisi dell’attività</span><h2>Progressi misurabili</h2><p>Radar attività, peso corporeo e distribuzione del volume di lavoro muscolare.</p></div></div>'+radarCard(a)+xpCard()+legend;
   };
   render=function(){
     const ok=originalRender();if(ok===false)return false;
