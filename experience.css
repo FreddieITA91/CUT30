@@ -233,3 +233,12 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(50,218,199,.5);bo
   .cx-xp-banner{grid-template-columns:auto minmax(0,1fr)}
   .cx-radar-label{font-size:11px}
 }
+
+/* CUT30 v2.0.1: anatomical SVG overrides and XP transparency */
+.muscle-map svg.cx-anatomy{width:100%;max-width:100%;height:auto;display:block}
+.cx-xp-detail{margin:16px 0}
+.cx-xp-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.cx-xp-breakdown>div{background:#0c2234;border:1px solid #29495c;padding:11px 12px;border-radius:12px;display:flex;justify-content:space-between;gap:9px;align-items:center}
+.cx-xp-breakdown span{font-size:11px;color:#b6cada}
+.cx-xp-breakdown strong{font-size:12px;color:#69f0d9;white-space:nowrap}
+@media(max-width:440px){.cx-xp-breakdown{grid-template-columns:1fr}}
