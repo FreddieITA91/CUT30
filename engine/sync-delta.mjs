@@ -65,8 +65,8 @@ export function planDeltaSync({headersByTab,localTables,remoteRanges,dirtyConfig
           updates.push({range:"'"+tab+"'!A"+server.rowNumber+':'+a1Column(headers.length)+server.rowNumber,values:[valuesFromObject(headers,rec)]});
         }
         mergedMap.set(id,rec);
-      }else if(localTime<remoteTime && lastSync && localTime>timeValue(lastSync)){
-        warnings.push('Modifica locale più vecchia di quella cloud, preferisco cloud: '+tab+' / '+id);
+      }else if(localTime<remoteTime && lastSync && localTime>timeValue(lastSync) && remoteTime>timeValue(lastSync)){
+        throw new Error('Conflitto simultaneo: '+tab+' / '+id+'. Salva un backup e riconcilia prima di sincronizzare.');
       }
     }
     if(append.length)appends.push({tab,range:"'"+tab+"'!A:"+a1Column(headers.length),values:append});
