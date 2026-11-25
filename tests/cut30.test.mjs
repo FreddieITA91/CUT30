@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildReport,canonicalWorkouts,rowsFromSheet,suggestTrainingDraft} from '../engine/cut30.mjs';
+import {buildReport,canonicalWorkouts,rowsFromSheet,suggestTrainingDraft,buildProgression} from '../engine/cut30.mjs';
 
 const data = {
   Allenamenti:[
@@ -108,4 +108,52 @@ test('explicit calendar overrides cycle, and recovery does not invent HR or minu
 test('completed date is not an invitation to repeat the session',()=>{
   const draft=suggestTrainingDraft(data,'2026-11-24',{program:'Lower A'});
   assert.equal(draft.status,'giornata_gia_conclusa');
+});
+
+const syntheticProgression = {
+ Allenamenti:[
+  {id:'a-20270104',data:'2027-01-04',programma:'Upper A',stato:'completato',durata_pesi_min:42,durata_cardio_min:12},
+  {id:'a-20270111',data:'2027-01-11',programma:'Upper A',stato:'completato',durata_pesi_min:44,durata_cardio_min:18},
+  {id:'a-20270118',data:'2027-01-18',programma:'Upper A',stato:'in_corso',durata_pesi_min:40,durata_cardio_min:10}
+ ],
+ Carichi:[
+  {id:'a',data:'2027-01-11',programma:'Upper A',esercizio:'Chest press',numero_serie:1,carico_kg:30,ripetizioni:7,unita_carico:'kg macchina | palestra A | attrezzo press-x'},
+  {id:'b',data:'2027-01-11',programma:'Upper A',esercizio:'Chest press',numero_serie:2,carico_kg:30,ripetizioni:8,unita_carico:'kg macchina | palestra A | attrezzo press-x'},
+  {id:'c',data:'2027-01-11',programma:'Upper A',esercizio:'Chest press',numero_serie:1,carico_kg:80,ripetizioni:9,unita_carico:'kg macchina | palestra B | attrezzo press-x'},
+  {id:'d',data:'2027-01-11',programma:'Upper A',esercizio:'Chest press',numero_serie:3,carico_kg:99,ripetizioni:9,unita_carico:'kg macchina'},
+  {id:'e',data:'2027-01-18',programma:'Upper A',esercizio:'Chest press',numero_serie:1,carico_kg:100,ripetizioni:9,unita_carico:'kg macchina | palestra A | attrezzo press-x'}
+ ]
+};
+const syntheticExercises=[{id:'press',name:'Panca piana / Chest press',dose:'3 × 6–10',rest:'90 sec'}];
+test('progression preserves planned volume and excludes open and future workouts',()=>{
+ const d=suggestTrainingDraft(syntheticProgression,'2027-01-18',{program:'Upper A',exercises:syntheticExercises});
+ assert.equal(d.cardio.duration_min,25);
+ assert.equal(d.progression.cardio.previous_minutes,18);
+ assert.equal(d.progression.cardio.remaining_to_planned,7);
+ assert.equal(d.progression.cardio.objective,'completa_volume_programmato');
+ assert.equal(d.progression.previous_session_date,'2027-01-11');
+});
+test('progression isolates equipment and ignores untagged and incomplete session loads',()=>{
+ const p=buildProgression(syntheticProgression,'2027-01-25','Upper A',25,syntheticExercises);
+ const ex=p.strength[0],a=ex.references.find(x=>x.gym==='A'),b=ex.references.find(x=>x.gym==='B');
+ assert.equal(ex.references.length,2);
+ assert.equal(ex.untagged_records,1);
+ assert.equal(a.reference_kg,30);
+ assert.equal(a.reference_reps,8);
+ assert.equal(a.recorded_sets,2);
+ assert.equal(a.conditional_target_reps,9);
+ assert.equal(b.reference_kg,80);
+ assert.equal(b.conditional_target_reps,10);
+});
+test('at top rep range do not invent a new load or reps beyond plan',()=>{
+ const p=buildProgression(syntheticProgression,'2027-01-25','Upper A',25,[{...syntheticExercises[0],dose:'3 × 6–8'}]);
+ assert.equal(p.strength[0].references.find(x=>x.gym==='A').conditional_target_reps,null);
+ assert.equal(p.strength[0].references.find(x=>x.gym==='B').conditional_target_reps,null);
+});
+test('no history does not invent baseline; recovery has no volume goal',()=>{
+ const p=buildProgression({},'2027-01-25','Upper A',25,syntheticExercises);
+ assert.equal(p.cardio.previous_minutes,null);
+ assert.equal(p.strength[0].references.length,0);
+ assert.equal(p.strength[0].status,'riferimento_da_registrare');
+ assert.equal(buildProgression({},'2027-01-25','Recupero',0).cardio.objective,'recupero');
 });

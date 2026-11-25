@@ -84,11 +84,22 @@
       '<p class="sm">'+h(suggest.date)+' · cardio '+c.duration_min+' min'+(c.target_average_hr_bpm===null?'':' · FC media indicativa '+fmtN(c.target_average_hr_bpm,1)+' bpm')+(suggest.core_minutes?' · core '+suggest.core_minutes+' min':'')+'</p>'+
       phases+'<p class="tiny muted">'+h(suggest.note)+'</p>';
   }
+  function progressionDraft(suggest){
+    if(suggest.status==='giornata_gia_conclusa')return '<p class="tiny muted">Giornata conclusa: nessuna nuova progressione da eseguire.</p>';
+    const p=suggest.progression,c=p.cardio;
+    const message=c.objective==='completa_volume_programmato'?'Ultima seduta '+c.previous_minutes+' min: obiettivo completare '+c.target_minutes+' min (+'+c.remaining_to_planned+' min).':c.objective==='consolida_efficienza'?'Ultima seduta '+c.previous_minutes+' min: consolida la durata e verifica efficienza a protocollo comparabile.':c.objective==='recupero'?'Giornata di recupero.':'Primo riferimento da registrare.';
+    return '<div class="small-title">Progressione dallo storico</div><p class="sm">'+h(message)+'</p><p class="tiny muted">'+h(c.note)+'</p>'+
+      (!loadedAt&&p.strength.length?'<p class="sm muted">Carichi privati non caricati: collega Google e aggiorna per visualizzare i riferimenti.</p>':'')+
+      p.strength.map(ex=>'<div class="entry"><div class="entry-main"><strong>'+h(ex.exercise)+'</strong><small>'+h(ex.dose)+' · recupero '+h(ex.rest)+'</small>'+
+      (ex.references.length?ex.references.map(r=>'<p class="tiny">'+h(r.exercise)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+' · '+h(r.date)+': '+h(String(r.reference_kg))+' '+h(r.unit)+' × '+h(String(r.reference_reps))+' reps. '+(r.conditional_target_reps===null?'Consolida/verifica prima di progredire.':'Obiettivo condizionato: '+r.conditional_target_reps+' reps allo stesso carico.')+' '+h(r.note)+'</p>').join(''):
+      '<p class="tiny muted">'+(ex.status==='storico_non_comparabile'?'Storico senza identificazione attrezzo: registrare riferimento comparabile.':'Nessun riferimento comparabile disponibile.')+'</p>')+'</div></div>').join('');
+  }
   function trainingPanel(){
-    const suggest=engine?engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti},selectedDate,{program:programFor(selectedDate),start_date:cfg('data_inizio')||'2026-11-02'}):null;
+    const program=programFor(selectedDate);
+    const suggest=engine?engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti,Carichi:cache.Carichi},selectedDate,{program,start_date:cfg('data_inizio')||'2026-11-02',exercises:/^(Upper|Lower) /.test(program)?WORKOUTS[program]:[]}):null;
     const mySets=cache.Carichi.filter(r=>r.data===selectedDate);
     return '<section class="panel cut30-engine"><div class="panel-head"><div><h2 class="section-title">CUT30 Engine · Serie e carichi</h2><p class="section-subtitle">Salvataggio puntuale su Google Sheets, senza riscrivere il diario</p></div><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      (suggest?cardioDraft(suggest):'')+
+      (suggest?cardioDraft(suggest)+progressionDraft(suggest):'')+
       '<form id="cut30-set-form" class="stack"><div class="form-row">'+
       '<div class="field"><label>Esercizio</label><input name="esercizio" required placeholder="Es. Leg press"></div>'+
       '<div class="field"><label>Numero serie</label><input name="serie" type="number" min="1" max="25" value="1" required></div>'+
