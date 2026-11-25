@@ -9,8 +9,9 @@
 
 ## Stato
 - Motore, test, cron e writer Google Sheets implementati nel ramo di lavoro.
-- **Non ancora in produzione**: occorrono credenziali GitHub Actions, PR approvata/merge, collaudo e interfaccia PWA.
-- La PWA attuale non mostra ancora Carichi e Valutazioni né il report AnalisiAuto; non è stata modificata in questa fase.
+- Il codice della PWA include pannelli per Carichi/Valutazioni, calcolatore ricette e salvataggio puntuale delle serie dopo accesso OAuth.
+- La sincronizzazione dell'app ora usa aggiornamenti per riga/ID con verifica; non riscrive intere tabelle.
+- Il **report programmato** non è operativo fino a configurazione delle credenziali di GitHub Actions e collaudo sul foglio reale.
 
 ## Configurazione sicura una tantum
 1. In Google Cloud abilitare la Google Sheets API e creare un service account con chiave JSON.
@@ -36,11 +37,11 @@ Il cron è alle 07:20 UTC (08:20 a Roma in inverno, 09:20 in estate); l'esecuzio
 - Le bozze allenamento non sono mai inserite fra le sessioni eseguite.
 
 ## Roadmap prioritaria
-1. Mostrare AnalisiAuto, Carichi e Valutazioni nella PWA con refresh non distruttivo.
-2. Scrittura idempotente dei singoli esercizi, set e pasti, con audit e correzioni.
-3. Distinzione FC di sala pesi e cardio, durata, passi, distanza e target cardiaco.
-4. Modulo ricette: ingredienti a crudo, resa finale, porzione pesata, valori etichetta.
-5. Generatore scheda automatico basato su disponibilità palestra, recupero, dati carichi e tempi.
-6. Report trend 7/14/30 giorni, alert di qualità e notifiche.
+1. **Attivato nel codice:** viste per Carichi e Valutazioni, ricette e aggiornamento mirato.
+2. **Da attivare:** credenziali del report giornaliero, collaudo finale su AnalisiAuto.
+3. **Da sviluppare:** registrazione segmentata della frequenza cardiaca (sala pesi/cardio), disponibilità palestra e attrezzi, RIR/RPE e media FC obiettivo.
+4. **Da sviluppare:** generazione schede complete con progressioni comparabili per macchina e fotografie dimostrative; attualmente solo bozza automatica.
+5. **Da sviluppare:** catalogo alimentare verificato per compilare ingredienti automaticamente, input etichetta/scansione, edit ricette registrate e audit.
+6. **Da sviluppare:** notifiche, report 7/14/30 giorni, sincronizzazione offline più robusta e gestione conflitti guidata.
 
 Per accesso multiutente e transazioni ad alta frequenza sarà opportuno passare a un database con API e autenticazione dedicate, mantenendo GitHub Actions per calcolo periodico, non come database.
