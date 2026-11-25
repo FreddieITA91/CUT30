@@ -1,4 +1,4 @@
-const CACHE='cut30-pwa-v2.1.0-20261125';
+const CACHE='cut30-pwa-v2.2.0-training';
 const ASSETS=['./','./index.html','./styles.css','./app.js','./experience.js','./experience.css','./cut30-engine-bridge.js','./engine/cut30.mjs','./engine/recipes.mjs','./engine/sync-delta.mjs','./manifest.webmanifest','./icons/cut30.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});

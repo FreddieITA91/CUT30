@@ -81,5 +81,31 @@ test('draft never creates a completed workout',()=>{
   const draft=suggestTrainingDraft(data,'2026-11-26');
   assert.equal(draft.status,'bozza_da_confermare');
   assert.ok(draft.program.startsWith('Upper') || draft.program.startsWith('Lower'));
-  assert.equal(draft.cardio.target_average_hr_bpm,135);
+  assert.equal(draft.program,'Upper B');
+  assert.equal(draft.cardio.duration_min,25);
+  assert.equal(draft.cardio.target_average_hr_bpm,129);
+});
+
+test('weekly calendar wins over missed workouts and preserves cardio day',()=>{
+  const draft=suggestTrainingDraft({},'2027-01-06',{start_date:'2027-01-04'});
+  assert.equal(draft.program,'Cardio H + core');
+  assert.equal(draft.cardio.duration_min,55);
+  assert.equal(draft.core_minutes,15);
+  assert.equal(draft.cardio.phases.reduce((s,p)=>s+p.duration_min,0),55);
+  assert.ok(draft.cardio.phases.every(p=>p.target_average_hr_bpm>=p.indicative_range_bpm[0]&&p.target_average_hr_bpm<=p.indicative_range_bpm[1]));
+  assert.equal(draft.cardio.target_average_hr_bpm,135.9);
+});
+test('explicit calendar overrides cycle, and recovery does not invent HR or minutes',()=>{
+  const draft=suggestTrainingDraft({},'2027-01-06',{start_date:'2027-01-04',program:'Recupero'});
+  assert.equal(draft.program,'Recupero');
+  assert.equal(draft.source,'calendario_esplicito');
+  assert.equal(draft.cardio.duration_min,0);
+  assert.equal(draft.cardio.target_average_hr_bpm,null);
+  assert.deepEqual(draft.cardio.phases,[]);
+  assert.throws(()=>suggestTrainingDraft({},'2027-02-30'),/Data scheda/);
+  assert.throws(()=>suggestTrainingDraft({},'2027-01-06',{program:'unknown'}),/Programma/);
+});
+test('completed date is not an invitation to repeat the session',()=>{
+  const draft=suggestTrainingDraft(data,'2026-11-24',{program:'Lower A'});
+  assert.equal(draft.status,'giornata_gia_conclusa');
 });

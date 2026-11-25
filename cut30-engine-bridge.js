@@ -77,11 +77,18 @@
       (ratings.length?ratings.map(x=>'<div class="entry"><div class="entry-main"><strong>'+h(x.programma)+'</strong><small>'+h(x.data)+'</small></div><div class="entry-val">'+h(String(x.voto_1_5))+'/5</div></div>').join(''):'<p class="sm muted">Valutazioni non ancora caricate.</p>')+
       '</div></div></section>';
   }
+  function cardioDraft(suggest){
+    const c=suggest.cardio;
+    const phases=c.phases.map(p=>'<div class="entry"><div class="entry-main"><strong>'+h(p.label)+' · '+p.duration_min+' min</strong><small>'+h(p.treadmill_speed_kmh.join('–'))+' km/h · pendenza '+p.incline_pct+'%</small></div><div class="entry-val">'+p.target_average_hr_bpm+' bpm<small> ('+h(p.indicative_range_bpm.join('–'))+')</small></div></div>').join('');
+    return '<div class="small-title">Scheda calendarizzata · '+h(suggest.program)+'</div>'+
+      '<p class="sm">'+h(suggest.date)+' · cardio '+c.duration_min+' min'+(c.target_average_hr_bpm===null?'':' · FC media indicativa '+fmtN(c.target_average_hr_bpm,1)+' bpm')+(suggest.core_minutes?' · core '+suggest.core_minutes+' min':'')+'</p>'+
+      phases+'<p class="tiny muted">'+h(suggest.note)+'</p>';
+  }
   function trainingPanel(){
-    const suggest=engine?engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti},selectedDate):null;
+    const suggest=engine?engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti},selectedDate,{program:programFor(selectedDate),start_date:cfg('data_inizio')||'2026-11-02'}):null;
     const mySets=cache.Carichi.filter(r=>r.data===selectedDate);
     return '<section class="panel cut30-engine"><div class="panel-head"><div><h2 class="section-title">CUT30 Engine · Serie e carichi</h2><p class="section-subtitle">Salvataggio puntuale su Google Sheets, senza riscrivere il diario</p></div><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      (suggest?'<p class="sm">Bozza motore per '+h(selectedDate)+': <strong>'+h(suggest.program)+'</strong> · cardio '+suggest.cardio.duration_min+' min, FC media di riferimento '+suggest.cardio.target_average_hr_bpm+' bpm. <em>Non è una sessione registrata.</em></p>':'')+
+      (suggest?cardioDraft(suggest):'')+
       '<form id="cut30-set-form" class="stack"><div class="form-row">'+
       '<div class="field"><label>Esercizio</label><input name="esercizio" required placeholder="Es. Leg press"></div>'+
       '<div class="field"><label>Numero serie</label><input name="serie" type="number" min="1" max="25" value="1" required></div>'+
