@@ -4,6 +4,7 @@
  * No third-party Node packages required; Node 22 native fetch + crypto.
  */
 import {createSign} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
 import {buildDailyCycle,romeDate,cycleRow,planDailyWrite,CYCLE_HEADERS} from './orchestrator.mjs';
 
 const name = 'AnalisiAuto';
@@ -50,6 +51,11 @@ async function main() {
     if(!res.ok)throw new Error('Google Sheets API status '+res.status);
     return res.status===204?{}:res.json();
   }
+  await publishDailyCycle(api,root,romeDate(),new Date().toISOString());
+  console.log('CUT30_AUTO: private daily report and cycle verified. No personal metrics printed.');
+}
+
+export async function publishDailyCycle(api,root,asOf,at){
   const meta=await api(root+'?fields=sheets.properties.title');
   const titles=new Set(meta.sheets?.map(x=>x.properties?.title)||[]);
   const required=['Config','Nutrizione','Allenamenti','Esercizi','Carichi','Misure','Valutazioni','Calendario'];
@@ -62,7 +68,6 @@ async function main() {
   const result=await api(root+'/values:batchGet?'+params);
   if(result.valueRanges?.length!==input.length)throw Error('Input read incomplete');
   const tables=Object.fromEntries(input.map((k,i)=>[k,result.valueRanges[i].values||[]]));
-  const asOf=romeDate(),at=new Date().toISOString();
   const cycle=buildDailyCycle(tables,asOf);
   const report=cycle.report,act=report.activity,nut=report.nutrition,w=report.weight_pre;
   const val=x=>x==null?'':x;
@@ -91,7 +96,7 @@ async function main() {
     const matches=after.slice(1).filter(x=>x[0]===asOf);
     if(matches.length!==1||o.head.some((_,i)=>String(matches[0][i]??'')!==String(o.row[i]??'')))throw Error('Output verification failed');
   }
-  console.log('CUT30_AUTO: private daily report and cycle verified. No personal metrics printed.');
+  return {status:'verified',date:asOf,outputs:outputs.map(o=>o.title)};
 }
 
-main().catch(()=>{console.error('CUT30_AUTO: FAILED — private processing or output verification failed; check configuration and schemas.');process.exitCode=1});
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(()=>{console.error('CUT30_AUTO: FAILED — private processing or output verification failed; check configuration and schemas.');process.exitCode=1});
