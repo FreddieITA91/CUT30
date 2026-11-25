@@ -3,7 +3,7 @@
    Only explicit form submissions write a single identified row. */
 (function cut30EngineBridge(){
   'use strict';
-  let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, planEngine=null, planLoaded=false, planSaving=false, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
+  let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, planEngine=null, auditEngine=null, auditSaving=false, planLoaded=false, planSaving=false, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
   const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[],SchedeConfermate:[]};
   const headers={
     Carichi:['id','data','programma','esercizio','numero_serie','carico_kg','ripetizioni','unita_carico','origine','updated_at'],
@@ -227,12 +227,54 @@
       await loadPlans();render();toast('Obiettivi confermati e verificati nel diario privato');
     }finally{planSaving=false;}
   }
+  function auditPanel(){
+    if(!planLoaded||!loadedAt)return '<p class="tiny muted">Aggiorna i dati privati per verificare gli obiettivi.</p>';
+    try{
+      const a=auditEngine.auditPerformance({SchedeConfermate:cache.SchedeConfermate,Allenamenti:state.tables.Allenamenti,Esercizi:state.tables.Esercizi,Carichi:cache.Carichi,CardioSegmenti:cardioLoaded?cache.CardioSegmenti:[]},selectedDate);
+      if(a.status!=='valutato')return '<p class="tiny muted">Audit: '+h(a.reason)+'</p>';
+      return '<div class="small-title">Valutazione automatica · proposta '+a.rating+'/5</div><p class="sm">'+h(a.outcome)+' · affidabilità '+h(a.confidence)+'</p>'+
+        [...a.strengths,...a.issues,...a.next].map(t=>'<p class="tiny">'+h(t)+'</p>').join('')+
+        '<p class="tiny muted">'+h(a.note)+'</p><button type="button" class="btn btn-quiet" data-cut30-save-audit '+(!connected()?'disabled':'')+'>Verifica e archivia audit privato</button>';
+    }catch(err){return formatWarn('Audit non disponibile: '+err.message);}
+  }
+  async function saveAudit(){
+    if(auditSaving||!connected())return;auditSaving=true;
+    const date=selectedDate;
+    try{
+      if(!confirm('Archiviare il confronto verificato per '+date+'? Le valutazioni manuali non saranno modificate.'))return;
+      if(!await loadPlans())throw Error('Scheda prospettica non disponibile');
+      await loadCardio();
+      const tabs=['Allenamenti','Esercizi','Carichi'];
+      const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
+      tabs.forEach(t=>params.append('ranges',"'"+t+"'!A:M"));
+      const remote=await googleApi('/values:batchGet?'+params.toString());
+      if(remote.valueRanges?.length!==tabs.length)throw Error('Verifica cloud incompleta');
+      const data=Object.fromEntries(tabs.map((t,i)=>[t,parseTable(remote.valueRanges[i].values||[])]));
+      const a=auditEngine.auditPerformance({...data,SchedeConfermate:cache.SchedeConfermate,CardioSegmenti:cache.CardioSegmenti},date);
+      if(a.status!=='valutato')throw Error(a.reason);
+      if(selectedDate!==date)throw Error('Data cambiata: riconferma');
+      if(!confirm('Audit verificato sul cloud: '+a.rating+'/5 · '+a.outcome+'. Confermi archiviazione?'))return;
+      const meta=await googleApi('?fields=sheets.properties.title');
+      if(!meta.sheets?.some(s=>s.properties.title==='AuditPrestazioni'))await googleApi(':batchUpdate','POST',{requests:[{addSheet:{properties:{title:'AuditPrestazioni',gridProperties:{rowCount:1000,columnCount:8,frozenRowCount:1}}}}]});
+      const range="'AuditPrestazioni'!A:H",read='/values/'+encodeURIComponent(range)+'?valueRenderOption=UNFORMATTED_VALUE';
+      const head=auditEngine.AUDIT_HEADERS,before=(await googleApi(read)).values||[];
+      if(before.length&&head.some((k,i)=>before[0][i]!==k))throw Error('Schema audit inatteso');
+      const rec=auditEngine.makeAuditRecord(a,new Date().toISOString());
+      const same=before.slice(1).filter(r=>r[0]===rec.id);
+      if(same.length){if(same.length===1&&same[0][7]===rec.audit_json){toast('Audit identico già archiviato');return;}throw Error('Audit già presente e differente: preservato per revisione');}
+      if(!before.length)await googleApi('/values/'+encodeURIComponent("'AuditPrestazioni'!A1:H1")+'?valueInputOption=RAW','PUT',{values:[head]});
+      await googleApi('/values/'+encodeURIComponent(range)+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',{values:[head.map(k=>rec[k])]});
+      const after=(await googleApi(read)).values||[],matches=after.slice(1).filter(r=>r[0]===rec.id);
+      if(matches.length!==1||head.some((k,i)=>String(matches[0][i]??'')!==String(rec[k])))throw Error('Verifica audit non riuscita: aggiorna prima di riprovare');
+      toast('Audit privato archiviato e verificato');
+    }finally{auditSaving=false;}
+  }
   function trainingPanel(){
     const program=programFor(selectedDate);
     const suggest=engine?currentDraft(selectedDate):null;
     const mySets=cache.Carichi.filter(r=>r.data===selectedDate);
     return '<section class="panel cut30-engine"><div class="panel-head"><div><h2 class="section-title">CUT30 Engine · Serie e carichi</h2><p class="section-subtitle">Salvataggio puntuale su Google Sheets, senza riscrivere il diario</p></div><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      (suggest?planPanel(suggest):'')+
+      (suggest?planPanel(suggest):'')+auditPanel()+
       '<form id="cut30-set-form" class="stack"><div class="form-row">'+
       '<div class="field"><label>Esercizio</label><input name="esercizio" required placeholder="Es. Leg press"></div>'+
       '<div class="field"><label>Numero serie</label><input name="serie" type="number" min="1" max="25" value="1" required></div>'+
@@ -386,6 +428,7 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    if(e.target.closest('[data-cut30-save-audit]')){e.preventDefault();saveAudit().catch(err=>toast('Audit: '+err.message));return;}
     if(e.target.closest('[data-cut30-confirm-plan]')){e.preventDefault();confirmPlan().catch(err=>toast('Conferma scheda: '+err.message));return;}
     if(e.target.closest('[data-cut30-refresh]')){e.preventDefault();refreshCloud();return;}
     if(e.target.closest('[data-cut30-add-ingredient]')){
@@ -406,7 +449,7 @@
   }
   async function init(){
     try{
-      [engine,recipeEngine,cardioEngine,learningEngine,planEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs')]);
+      [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);

@@ -29,7 +29,7 @@ export function buildTrainingPlan(draft,exercises,learning=null){
     const ref=draft.progression?.strength?.find(x=>x.exercise_id===id);
     return {id,name:str(e.name,'Esercizio'),dose:str(e.dose,'Dose'),rest:str(e.rest,'Recupero'),sets:e.sets,muscle:String(e.muscle||''),
       references:(ref?.references||[]).map(r=>({exercise:String(r.exercise||''),gym:String(r.gym||''),equipment:String(r.equipment||''),unit:String(r.unit||''),date:String(r.date||''),
-        reference_kg:optionalNumber(r.reference_kg),reference_reps:optionalNumber(r.reference_reps),conditional_target_reps:optionalNumber(r.conditional_target_reps),
+        reference_kg:optionalNumber(r.reference_kg),reference_reps:optionalNumber(r.reference_reps),reference_rir:optionalNumber(r.reference_rir),reference_rpe:optionalNumber(r.reference_rpe),conditional_target_reps:optionalNumber(r.conditional_target_reps),
         load_increase_allowed:r.load_increase_allowed===true,action:String(r.action||''),note:String(r.note||'')}))};
   });
   if(/^(Upper|Lower) /.test(draft.program)&&!items.length)throw Error('Scheda pesi priva di esercizi');

@@ -46,6 +46,7 @@ jobs:
           node --check engine/cardio-segments.mjs
           node --check engine/learning.mjs
           node --check engine/training-plan.mjs
+          node --check engine/performance-audit.mjs
           node --check engine/recipes.mjs
           node --check engine/sync-delta.mjs
           node --check engine/publish-report.mjs
