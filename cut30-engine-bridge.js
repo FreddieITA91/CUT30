@@ -1,4 +1,4 @@
-/* CUT30 Engine Bridge — additive UI. Does not change the legacy PWA full-sheet sync.
+/* CUT30 Engine Bridge — additive UI. Uses targeted private writes alongside delta sync.
    Carichi, Valutazioni and AnalisiAuto remain exclusively in private Google Sheets.
    Only explicit form submissions write a single identified row. */
 (function cut30EngineBridge(){
@@ -24,13 +24,14 @@
     busy=true;
     try{
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-      ['Carichi','Valutazioni','AnalisiAuto'].forEach(x=>params.append('ranges',"'"+x+"'!A1:P4000"));
+      const end={Carichi:'J',Valutazioni:'L',AnalisiAuto:'P'};
+      ['Carichi','Valutazioni','AnalisiAuto'].forEach(x=>params.append('ranges',"'"+x+"'!A:"+end[x]));
       // AnalisiAuto might not exist before the first server-side job.
       let result;
       try{result=await googleApi('/values:batchGet?'+params.toString());}
       catch(e){
         const fallback=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-        ['Carichi','Valutazioni'].forEach(x=>fallback.append('ranges',"'"+x+"'!A1:P4000"));
+        ['Carichi','Valutazioni'].forEach(x=>fallback.append('ranges',"'"+x+"'!A:"+end[x]));
         result=await googleApi('/values:batchGet?'+fallback.toString());
         cache.AnalisiAuto=[];
       }
@@ -208,7 +209,8 @@
       await loadCardio();
       const tabs=['Allenamenti','Calendario','Esercizi','Carichi'];
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-      tabs.forEach(t=>params.append('ranges',"'"+t+"'!A:M"));
+      const end={Allenamenti:'M',Calendario:'F',Esercizi:'F',Carichi:'J'};
+      tabs.forEach(t=>params.append('ranges',"'"+t+"'!A:"+end[t]));
       const remote=await googleApi('/values:batchGet?'+params.toString());
       if(remote.valueRanges?.length!==tabs.length)throw Error('Verifica cloud incompleta');
       const data=Object.fromEntries(tabs.map((t,i)=>[t,parseTable(remote.valueRanges[i].values||[])]));
@@ -252,7 +254,8 @@
       await loadCardio();
       const tabs=['Allenamenti','Esercizi','Carichi'];
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-      tabs.forEach(t=>params.append('ranges',"'"+t+"'!A:M"));
+      const end={Allenamenti:'M',Calendario:'F',Esercizi:'F',Carichi:'J'};
+      tabs.forEach(t=>params.append('ranges',"'"+t+"'!A:"+end[t]));
       const remote=await googleApi('/values:batchGet?'+params.toString());
       if(remote.valueRanges?.length!==tabs.length)throw Error('Verifica cloud incompleta');
       const data=Object.fromEntries(tabs.map((t,i)=>[t,parseTable(remote.valueRanges[i].values||[])]));
@@ -332,11 +335,13 @@
   async function saveRow(table,rec){
     if(!connected())throw new Error('Account Google non collegato o sessione scaduta');
     const head=headers[table];
-    const url="/values/"+encodeURIComponent("'"+table+"'!A1:P4000")+"?valueRenderOption=UNFORMATTED_VALUE";
+    const url="/values/"+encodeURIComponent("'"+table+"'!A:"+String.fromCharCode(64+head.length))+"?valueRenderOption=UNFORMATTED_VALUE";
     const data=await googleApi(url);
     const values=data.values||[];
     if(!values.length || head.some((x,i)=>String(values[0][i]||'')!==x))throw new Error('Schema inatteso: '+table+'. Nessuna modifica eseguita.');
-    const previous=values.findIndex((r,i)=>i>0&&String(r[0])===rec.id);
+    const matches=values.map((r,i)=>i>0&&String(r[0])===rec.id?i:-1).filter(i=>i>0);
+    if(matches.length>1)throw new Error('ID duplicato: riconciliare prima di scrivere');
+    const previous=matches[0]??-1;
     if(table==='Carichi' && previous<0){
       const conflict=values.find((r,i)=>i>0 && String(r[1])===rec.data &&
         slug(String(r[3]||''))===slug(rec.esercizio) && Number(r[4])===rec.numero_serie);
@@ -350,7 +355,9 @@
       await googleApi('/values/'+encodeURIComponent("'"+table+"'!A:"+String.fromCharCode(64+head.length))+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',body);
     }
     const after=await googleApi(url);
-    const saved=(after.values||[]).find((r,i)=>i>0&&r[0]===rec.id);
+    const verified=(after.values||[]).filter((r,i)=>i>0&&r[0]===rec.id);
+    if(verified.length!==1)throw new Error('Verifica record non univoca: aggiorna il diario');
+    const saved=verified[0];
     if(!saved)throw new Error('Scrittura inviata ma verifica del record non riuscita');
     const mismatch=head.some((key,index)=>String(saved[index]??'')!==String(rec[key]??''));
     if(mismatch)throw new Error('Il record esiste ma alcuni valori non coincidono: aggiorna il diario prima di riprovare.');

@@ -139,9 +139,10 @@ async function sync(){
     const {planDeltaSync}=await import('./engine/sync-delta.mjs');
     const tables=Object.keys(TABLES);
     const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-    for(const tab of tables)params.append('ranges',"'"+tab+"'!A1:O2000");
+    for(const tab of tables)params.append('ranges',"'"+tab+"'!A:"+String.fromCharCode(64+TABLES[tab].length));
     const remote=await googleApi('/values:batchGet?'+params.toString());
-    const before=Object.fromEntries(tables.map((tab,i)=>[tab,remote.valueRanges?.[i]?.values||[]]));
+    if(remote.valueRanges?.length!==tables.length)throw new Error('Lettura cloud incompleta: nessuna scrittura');
+    const before=Object.fromEntries(tables.map((tab,i)=>[tab,remote.valueRanges[i].values||[]]));
     const planned=planDeltaSync({
       headersByTab:TABLES,localTables:state.tables,remoteRanges:before,
       dirtyConfig:state.dirtyConfig,lastSync:state.lastSync
