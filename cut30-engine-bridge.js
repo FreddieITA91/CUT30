@@ -3,8 +3,8 @@
    Only explicit form submissions write a single identified row. */
 (function cut30EngineBridge(){
   'use strict';
-  let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
-  const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[]};
+  let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, planEngine=null, planLoaded=false, planSaving=false, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
+  const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[],SchedeConfermate:[]};
   const headers={
     Carichi:['id','data','programma','esercizio','numero_serie','carico_kg','ripetizioni','unita_carico','origine','updated_at'],
     Nutrizione:['id','data','pasto','alimento','quantita','unita','kcal','proteine','carboidrati','grassi','fibre','qualita','updated_at']
@@ -38,6 +38,7 @@
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
+      try{await loadPlans();}catch(err){planLoaded=false;cache.SchedeConfermate=[];console.warn('Plan archive unavailable');}
       loadedAt=Date.now();
       if(engine)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
@@ -155,12 +156,83 @@
         r.actions.map(a=>'<p class="sm">'+h(a.text)+'</p>').join('')+'<p class="tiny muted">'+h(r.note)+'</p>';
     }catch(err){return formatWarn('Analisi storico non disponibile: '+err.message);}
   }
+  async function loadPlans(){
+    const meta=await googleApi('?fields=sheets.properties.title');
+    const exists=meta.sheets?.some(s=>s.properties.title==='SchedeConfermate');
+    if(!exists){cache.SchedeConfermate=[];planLoaded=true;return false;}
+    const r=await googleApi('/values/'+encodeURIComponent("'SchedeConfermate'!A:F")+'?valueRenderOption=UNFORMATTED_VALUE');
+    const values=r.values||[];
+    if(values.length&&planEngine.PLAN_HEADERS.some((k,i)=>values[0][i]!==k))throw Error('Schema SchedeConfermate inatteso');
+    cache.SchedeConfermate=parseTable(values);planLoaded=true;return true;
+  }
+  function currentDraft(day){
+    const program=programFor(day);
+    return engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti,Carichi:cache.Carichi},day,{program,start_date:cfg('data_inizio')||'2026-11-02',exercises:/^(Upper|Lower) /.test(program)?WORKOUTS[program]:[]});
+  }
+  function createPlan(day){
+    const d=currentDraft(day);
+    const learn=learningEngine.reviewTrainingHistory({Allenamenti:state.tables.Allenamenti,CardioSegmenti:cardioLoaded?cache.CardioSegmenti:[],Valutazioni:loadedAt?cache.Valutazioni:[]},d);
+    return planEngine.buildTrainingPlan(d,WORKOUTS[d.program]||[],learn);
+  }
+  function planPanel(suggest){
+    try{
+      const saved=cache.SchedeConfermate.filter(x=>x.data===selectedDate);
+      if(saved.length>1)return formatWarn('Schede duplicate: verifica archivio privato.');
+      const p=saved.length?planEngine.readPlanRecord(saved[0]):suggest.status==='giornata_gia_conclusa'?null:createPlan(selectedDate);
+      if(!p)return '<p class="sm muted">Seduta conclusa senza scheda prospettica registrata.</p>';
+      const check=planEngine.canConfirmPlan(p,localDate(),{plans:cache.SchedeConfermate,workouts:state.tables.Allenamenti,calendar:state.tables.Calendario,exercises:state.tables.Esercizi,loads:cache.Carichi,segments:cache.CardioSegmenti});
+      return '<div class="small-title">'+(saved.length?'Obiettivo originale confermato':'Scheda completa · bozza')+' · '+h(p.program)+'</div>'+
+        '<p class="sm">'+h(p.date)+(saved.length?' · confermata '+h(saved[0].confermato_utc):' · non ancora confermata')+' · cardio '+p.cardio.duration_min+' min · core '+p.core_minutes+' min</p>'+
+        p.exercises.map(e=>'<div class="entry"><div class="entry-main"><strong>'+h(e.name)+'</strong><small>'+h(e.dose)+' · recupero '+h(e.rest)+'</small>'+e.references.map(r=>'<p class="tiny">'+h(r.gym)+' · '+h(r.equipment)+' · '+h(String(r.reference_kg??'—'))+' '+h(r.unit)+' × '+h(String(r.reference_reps??'—'))+' · '+h(r.note)+'</p>').join('')+'</div></div>').join('')+
+        p.cardio.phases.map(x=>'<p class="tiny">'+h(x.label)+' · '+x.duration_min+' min · FC media '+x.target_average_hr_bpm+' bpm ('+h(x.indicative_range_bpm.join('–'))+') · '+h(x.treadmill_speed_kmh.join('–'))+' km/h · '+x.incline_pct+'%</p>').join('')+
+        p.guidance.map(x=>'<p class="tiny muted">'+h(x)+'</p>').join('')+
+        (saved.length?'<p class="tiny muted">Obiettivo originale non sovrascritto dal motore. Eventuali modifiche operative non riscrivono lo storico.</p>':
+         '<button type="button" class="btn" data-cut30-confirm-plan '+(!connected()||!planLoaded||!loadedAt||!check.ok?'disabled':'')+'>Conferma obiettivi prima della seduta</button><p class="tiny muted">'+h(check.ok?'La conferma salva la scheda privata, non registra un allenamento. Richiede verifica cloud.':check.reason)+'</p>');
+    }catch(err){return formatWarn('Scheda non disponibile: '+err.message);}
+  }
+  async function confirmPlan(){
+    if(planSaving||!connected())return;
+    planSaving=true;
+    const date=selectedDate;
+    try{
+      // Capture what was shown before asynchronous reads, then refuse if it changed.
+      const p=createPlan(date),displayed=JSON.stringify(p);
+      if(!confirm('Confermi gli obiettivi per '+date+' prima di iniziare?'))return;
+      const exists=await loadPlans();
+      await loadCardio();
+      const tabs=['Allenamenti','Calendario','Esercizi','Carichi'];
+      const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
+      tabs.forEach(t=>params.append('ranges',"'"+t+"'!A:M"));
+      const remote=await googleApi('/values:batchGet?'+params.toString());
+      if(remote.valueRanges?.length!==tabs.length)throw Error('Verifica cloud incompleta');
+      const data=Object.fromEntries(tabs.map((t,i)=>[t,parseTable(remote.valueRanges[i].values||[])]));
+      const check=planEngine.canConfirmPlan(p,localDate(),{plans:cache.SchedeConfermate,
+        workouts:[...state.tables.Allenamenti,...data.Allenamenti],calendar:[...state.tables.Calendario,...data.Calendario],
+        exercises:[...state.tables.Esercizi,...data.Esercizi],loads:[...cache.Carichi,...data.Carichi],segments:cache.CardioSegmenti});
+      if(!check.ok)throw Error(check.reason);
+      if(selectedDate!==date||JSON.stringify(createPlan(date))!==displayed)throw Error('Scheda modificata durante la verifica: aggiorna e riconferma');
+      // Do not silently confirm a stale calendar override.
+      const cloudOverride=data.Calendario.find(x=>x.data===date&&x.stato!=='eliminato');
+      if(cloudOverride&&cloudOverride.programma!==p.program)throw Error('Calendario cloud differente: sincronizza prima');
+      if(!exists)await googleApi(':batchUpdate','POST',{requests:[{addSheet:{properties:{title:'SchedeConfermate',gridProperties:{rowCount:1000,columnCount:6,frozenRowCount:1}}}}]});
+      const range="'SchedeConfermate'!A:F",read='/values/'+encodeURIComponent(range)+'?valueRenderOption=UNFORMATTED_VALUE';
+      const before=(await googleApi(read)).values||[],head=planEngine.PLAN_HEADERS;
+      if(before.length&&head.some((k,i)=>before[0][i]!==k))throw Error('Schema inatteso');
+      if(before.slice(1).some(r=>r[1]===date))throw Error('Obiettivo già presente: nessuna sovrascrittura');
+      if(!before.length)await googleApi('/values/'+encodeURIComponent("'SchedeConfermate'!A1:F1")+'?valueInputOption=RAW','PUT',{values:[head]});
+      const rec=planEngine.makePlanRecord(p,new Date().toISOString());
+      await googleApi('/values/'+encodeURIComponent(range)+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',{values:[head.map(k=>rec[k])]});
+      const after=(await googleApi(read)).values||[],matches=after.slice(1).filter(r=>r[1]===date);
+      if(matches.length!==1||head.some((k,i)=>String(matches[0][i]??'')!==String(rec[k])))throw Error('Verifica archivio non riuscita: aggiorna prima di riprovare');
+      await loadPlans();render();toast('Obiettivi confermati e verificati nel diario privato');
+    }finally{planSaving=false;}
+  }
   function trainingPanel(){
     const program=programFor(selectedDate);
-    const suggest=engine?engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti,Carichi:cache.Carichi},selectedDate,{program,start_date:cfg('data_inizio')||'2026-11-02',exercises:/^(Upper|Lower) /.test(program)?WORKOUTS[program]:[]}):null;
+    const suggest=engine?currentDraft(selectedDate):null;
     const mySets=cache.Carichi.filter(r=>r.data===selectedDate);
     return '<section class="panel cut30-engine"><div class="panel-head"><div><h2 class="section-title">CUT30 Engine · Serie e carichi</h2><p class="section-subtitle">Salvataggio puntuale su Google Sheets, senza riscrivere il diario</p></div><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      (suggest?cardioDraft(suggest)+progressionDraft(suggest)+learningPanel(suggest):'')+
+      (suggest?planPanel(suggest):'')+
       '<form id="cut30-set-form" class="stack"><div class="form-row">'+
       '<div class="field"><label>Esercizio</label><input name="esercizio" required placeholder="Es. Leg press"></div>'+
       '<div class="field"><label>Numero serie</label><input name="serie" type="number" min="1" max="25" value="1" required></div>'+
@@ -314,6 +386,7 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    if(e.target.closest('[data-cut30-confirm-plan]')){e.preventDefault();confirmPlan().catch(err=>toast('Conferma scheda: '+err.message));return;}
     if(e.target.closest('[data-cut30-refresh]')){e.preventDefault();refreshCloud();return;}
     if(e.target.closest('[data-cut30-add-ingredient]')){
       e.preventDefault();
@@ -333,7 +406,7 @@
   }
   async function init(){
     try{
-      [engine,recipeEngine,cardioEngine,learningEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs')]);
+      [engine,recipeEngine,cardioEngine,learningEngine,planEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs')]);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);

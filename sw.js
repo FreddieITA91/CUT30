@@ -1,5 +1,5 @@
-const CACHE='cut30-pwa-v2.6.0-learning';
-const ASSETS=['./','./index.html','./styles.css','./app.js','./experience.js','./experience.css','./cut30-engine-bridge.js','./engine/cut30.mjs','./engine/cardio-segments.mjs','./engine/learning.mjs','./engine/recipes.mjs','./engine/sync-delta.mjs','./manifest.webmanifest','./icons/cut30.svg'];
+const CACHE='cut30-pwa-v2.7.0-plans';
+const ASSETS=['./','./index.html','./styles.css','./app.js','./experience.js','./experience.css','./cut30-engine-bridge.js','./engine/cut30.mjs','./engine/cardio-segments.mjs','./engine/learning.mjs','./engine/training-plan.mjs','./engine/recipes.mjs','./engine/sync-delta.mjs','./manifest.webmanifest','./icons/cut30.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||new URL(e.request.url).origin!==self.location.origin)return;e.respondWith(fetch(e.request).then(r=>{if(r.ok){let clone=r.clone();caches.open(CACHE).then(c=>c.put(e.request,clone))}return r}).catch(()=>caches.match(e.request)))})
