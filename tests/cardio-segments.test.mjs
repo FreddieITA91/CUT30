@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validateCardioSegment as v,summarizeCardioSegments as sum,CARDIO_HEADERS} from '../engine/cardio-segments.mjs';
+const date='2027-02-01';
+const a={data:date,modalita:'tapis',numero_segmento:1,durata_min:30,distanza_km:3,kcal_attive:200,fc_media:130,fc_max:145,passi_tapis:3000,pendenza_pct:4,updated_at:'2027-02-01T10:00:00Z'};
+const b={data:date,modalita:'piscina',numero_segmento:2,durata_min:10,kcal_attive:80,fc_media:150,passo_sec_100m:140,updated_at:'2027-02-01T11:00:00Z'};
+test('optional metrics are missing rather than zero and schema is stable',()=>{const r=v(b);assert.equal(r.distanza_km,null);assert.equal(r.fc_max,null);assert.equal(r.passo_sec_100m,140);assert.deepEqual(Object.keys(r),CARDIO_HEADERS);});
+test('weighted heart rate, partial distance and max, and separate modes',()=>{const r=sum([a,b],date);assert.equal(r.minutes,40);assert.equal(r.hr_mean,135);assert.equal(r.hr_coverage_minutes,40);assert.equal(r.hr_max,145);assert.equal(r.hr_max_complete,false);assert.deepEqual(r.distance,{value:3,complete:false});assert.deepEqual(r.kcal,{value:280,complete:true});assert.equal(r.modes.piscina.minutes,10);assert.equal(r.treadmill_steps.value,3000);});
+test('missing HR is not treated as zero and no empty totals invented',()=>{const r=sum([a,{...b,fc_media:''}],date);assert.equal(r.hr_mean,130);assert.equal(r.hr_coverage_minutes,30);assert.equal(sum([],date).kcal.value,null);});
+test('duplicate corrections replace, not add, and conflict fails closed',()=>{const corrected={...a,durata_min:32,updated_at:'2027-02-01T12:00:00Z'};assert.equal(sum([a,b,corrected],date).minutes,42);assert.throws(()=>sum([a,{...a,durata_min:31}],date),/conflitto/);});
+test('reject inconsistent metrics and invalid date or activity',()=>{assert.throws(()=>v({...a,fc_max:100}),/FC massima/);assert.throws(()=>v({...b,passi_tapis:3}),/solo per tapis/);assert.throws(()=>v({...a,passo_sec_100m:20}),/piscina/);assert.throws(()=>v({...a,data:'2027-02-30'}),/Data/);assert.throws(()=>v({...a,durata_min:''}),/obbligatori/);});

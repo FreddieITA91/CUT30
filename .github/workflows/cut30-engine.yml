@@ -43,6 +43,7 @@ jobs:
       - name: Syntax check
         run: |
           node --check engine/cut30.mjs
+          node --check engine/cardio-segments.mjs
           node --check engine/recipes.mjs
           node --check engine/sync-delta.mjs
           node --check engine/publish-report.mjs
