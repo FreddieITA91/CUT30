@@ -36,7 +36,9 @@ jobs:
         run: |
           node --check engine/cut30.mjs
           node --check engine/recipes.mjs
+          node --check engine/sync-delta.mjs
           node --check engine/publish-report.mjs
+          node --check app.js
           node --check cut30-engine-bridge.js
       - name: Unit tests (synthetic data only)
         run: node --test tests/*.test.mjs
