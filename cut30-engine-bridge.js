@@ -59,8 +59,8 @@
       '<div class="stat"><div class="label">Sessioni concluse</div><div class="number">'+fmtN(a.activity.workouts_completed)+'</div></div>'+
       '<div class="stat"><div class="label">Pesi / cardio</div><div class="number">'+fmtN(a.activity.weights_minutes)+' / '+fmtN(a.activity.cardio_minutes)+'</div><div class="note">Minuti · 14 giorni</div></div>'+
       '<div class="stat"><div class="label">Giorni con 3 pasti</div><div class="number">'+fmtN(a.nutrition.three_meal_days)+'/14</div></div>'+
-      '<div class="stat"><div class="label">Serie confermate</div><div class="number">'+fmtN(a.activity.recorded_sets)+'</div></div>'+
-      '<div class="stat"><div class="label">Voto medio</div><div class="number">'+(a.activity.average_rating===null?'—':fmtN(a.activity.average_rating,2)+'/5')+'</div></div>'+
+      '<div class="stat"><div class="label">Serie confermate</div><div class="number">'+(loadedAt?fmtN(a.activity.recorded_sets):'—')+'</div></div>'+
+      '<div class="stat"><div class="label">Voto medio</div><div class="number">'+(!loadedAt||a.activity.average_rating===null?'—':fmtN(a.activity.average_rating,2)+'/5')+'</div></div>'+
       '<div class="stat"><div class="label">Trend peso PRE</div><div class="number">'+(a.weight_pre.kg_per_week===null?'—':fmtN(a.weight_pre.kg_per_week,2)+' kg/sett')+'</div></div></div>'+
       '<p class="tiny muted">Calorie stimate dal tracker: '+fmtN(a.activity.tracker_estimated_kcal)+' kcal (NON rappresentano il deficit).</p>'+
       (a.warnings.length?'<div class="warning-note">'+a.warnings.map(w=>'<p>'+h(w)+'</p>').join('')+'</div>':'')+
