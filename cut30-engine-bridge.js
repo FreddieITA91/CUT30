@@ -135,6 +135,11 @@
     const values=data.values||[];
     if(!values.length || head.some((x,i)=>String(values[0][i]||'')!==x))throw new Error('Schema inatteso: '+table+'. Nessuna modifica eseguita.');
     const previous=values.findIndex((r,i)=>i>0&&String(r[0])===rec.id);
+    if(table==='Carichi' && previous<0){
+      const conflict=values.find((r,i)=>i>0 && String(r[1])===rec.data &&
+        slug(String(r[3]||''))===slug(rec.esercizio) && Number(r[4])===rec.numero_serie);
+      if(conflict)throw new Error('Questa serie risulta già presente (ID '+String(conflict[0])+'). Evito il duplicato: correggi quella registrazione o richiedi una seconda sessione.');
+    }
     const body={values:[head.map(k=>rec[k]??'')]};
     if(previous>0){
       const row=previous+1,range="'"+table+"'!A"+row+":"+String.fromCharCode(64+head.length)+row;
@@ -145,6 +150,8 @@
     const after=await googleApi(url);
     const saved=(after.values||[]).find((r,i)=>i>0&&r[0]===rec.id);
     if(!saved)throw new Error('Scrittura inviata ma verifica del record non riuscita');
+    const mismatch=head.some((key,index)=>String(saved[index]??'')!==String(rec[key]??''));
+    if(mismatch)throw new Error('Il record esiste ma alcuni valori non coincidono: aggiorna il diario prima di riprovare.');
     return saved;
   }
   async function submitSet(form){
@@ -189,7 +196,7 @@
     const {name,meal,date,result:r}=currentRecipe;
     if(date!==selectedDate)throw new Error('Data modificata: ricalcola prima di registrare');
     const rec={
-      id:'n-'+date.replaceAll('-','')+'-ricetta-'+Date.now().toString(36),
+      id:form.dataset.recordId || (form.dataset.recordId='n-'+date.replaceAll('-','')+'-ricetta-'+Date.now().toString(36)),
       data:date,pasto:meal,alimento:name,quantita:r.serving_cooked_g,unita:'g',
       kcal:r.serving.kcal,proteine:r.serving.proteine,carboidrati:r.serving.carboidrati,
       grassi:r.serving.grassi,fibre:r.serving.fibre,
@@ -213,6 +220,16 @@
     form.dataset.pending='1';
     const task=form.id==='cut30-set-form'?submitSet(form):Promise.resolve().then(()=>computeRecipe(form));
     Promise.resolve(task).catch(err=>{toast('CUT30 Engine: '+err.message);console.error('CUT30 Engine input:',err.message);}).finally(()=>{form.dataset.pending='0';});
+  }
+  function onInput(e){
+    const form=e.target.closest('#cut30-recipe-form');
+    if(!form)return;
+    currentRecipe=null;
+    const button=form.querySelector('[data-cut30-save-recipe]');
+    if(button)button.disabled=true;
+    if(form.dataset.recordId)delete form.dataset.recordId;
+    const result=form.querySelector('#cut30-recipe-result');
+    if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
     if(e.target.closest('[data-cut30-refresh]')){e.preventDefault();refreshCloud();return;}
@@ -239,6 +256,7 @@
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);
       document.addEventListener('click',onClick);
+      document.addEventListener('input',onInput);
       render();
       setTimeout(()=>refreshCloud(true),1000);
       setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&Date.now()-loadedAt>300000)refreshCloud(true);},90000);
