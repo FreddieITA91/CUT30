@@ -1,0 +1,56 @@
+name: CUT30 Engine — Test & Daily Analytics
+on:
+  push:
+    branches: [main, 'feature/**']
+    paths:
+      - 'engine/**'
+      - 'tests/**'
+      - '.github/workflows/cut30-engine.yml'
+  pull_request:
+    paths:
+      - 'engine/**'
+      - 'tests/**'
+      - '.github/workflows/cut30-engine.yml'
+  workflow_dispatch:
+  schedule:
+    # 07:20 UTC daily = 08:20 Rome winter / 09:20 Rome summer.
+    - cron: '20 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cut30-engine-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Deterministic analytics tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: |
+          node --check engine/cut30.mjs
+          node --check engine/publish-report.mjs
+      - name: Unit tests (synthetic data only)
+        run: node --test tests/*.test.mjs
+
+  analytics:
+    name: Update private Sheets report
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate daily report (no raw data in logs)
+        env:
+          CUT30_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.CUT30_GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CUT30_SPREADSHEET_ID: ${{ secrets.CUT30_SPREADSHEET_ID }}
+        run: node engine/publish-report.mjs
