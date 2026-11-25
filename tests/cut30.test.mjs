@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildReport,canonicalWorkouts,rowsFromSheet,suggestTrainingDraft,buildProgression} from '../engine/cut30.mjs';
+import {buildReport,canonicalWorkouts,rowsFromSheet,suggestTrainingDraft,buildProgression,validateSetEffort,encodeSetEffort,readSetEffort,decideSetProgression} from '../engine/cut30.mjs';
 
 const data = {
   Allenamenti:[
@@ -156,4 +156,28 @@ test('no history does not invent baseline; recovery has no volume goal',()=>{
  assert.equal(p.strength[0].references.length,0);
  assert.equal(p.strength[0].status,'riferimento_da_registrare');
  assert.equal(buildProgression({},'2027-01-25','Recupero',0).cardio.objective,'recupero');
+});
+
+test('effort is optional, validated and backward compatible',()=>{
+ assert.deepEqual(readSetEffort('legacy'),{tipo_serie:'non_specificata',rir:null,rpe:null});
+ assert.deepEqual(readSetEffort(encodeSetEffort('manual',{tipo_serie:'allenante',rir:2,rpe:8})),{tipo_serie:'allenante',rir:2,rpe:8});
+ assert.throws(()=>validateSetEffort({rir:11}),/non valido/);
+ assert.throws(()=>validateSetEffort({rir:5,rpe:9}),/incoerenti/);
+ assert.equal(readSetEffort('manual | CUT30_EFFORT_V1=bad').rir,null);
+});
+const effortSet=(kg,reps,rir,type='allenante',rpe=null)=>({carico_kg:kg,ripetizioni:reps,origine:encodeSetEffort('test',{tipo_serie:type,rir,rpe})});
+test('all planned working sets at top range with reserve qualify for conditional minimum increment',()=>{
+ const d=decideSetProgression([effortSet(20,10,3),effortSet(20,10,2),effortSet(20,10,2),effortSet(30,3,4,'riscaldamento')],{min:6,max:10},3);
+ assert.equal(d.reference_kg,20);assert.equal(d.working_sets,3);assert.equal(d.load_increase_allowed,true);
+ assert.equal(d.action,'incremento_carico_condizionato');
+});
+test('high effort blocks progression even if repetitions below target',()=>{
+ const d=decideSetProgression([effortSet(20,8,1),effortSet(20,9,3)],{min:6,max:10},2);
+ assert.equal(d.action,'consolida_o_riduci');assert.equal(d.conditional_target_reps,null);assert.equal(d.load_increase_allowed,false);
+});
+test('missing RIR or incomplete/mixed-load working sets do not qualify for load increase',()=>{
+ for(const sets of [[effortSet(20,10,null),effortSet(20,10,2)],[effortSet(20,10,2)],[effortSet(20,10,2),effortSet(22,10,2)]]){
+  assert.equal(decideSetProgression(sets,{min:6,max:10},2).load_increase_allowed,false);
+ }
+ assert.equal(decideSetProgression([effortSet(20,10,4,'riscaldamento')],{min:6,max:10},1),null);
 });

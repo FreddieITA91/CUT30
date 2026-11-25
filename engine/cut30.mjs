@@ -244,18 +244,70 @@ export function buildProgression(rawTables, asOf, program, cardioTarget, exercis
         if(!old||String(x.updated_at||'')>=String(old.updated_at||''))bySet.set(num(x.numero_serie),x);
       }
       const sets=[...bySet.values()].sort((a,b)=>num(a.numero_serie)-num(b.numero_serie));
-      const peak=[...sets].sort((a,b)=>num(b.carico_kg)-num(a.carico_kg)||num(b.ripetizioni)-num(a.ripetizioni))[0];
-      const reps=num(peak.ripetizioni),kg=num(peak.carico_kg);
-      const next=bounds&&reps>=bounds.min&&reps<bounds.max?reps+1:null;
-      return {exercise:g.exercise,gym:g.gym,equipment:g.equipment,unit:g.unit,date,
-        recorded_sets:sets.length,reference_kg:kg,reference_reps:reps,
-        conditional_target_reps:next,action:next===null?'verifica_prima_di_progredire':'una_ripetizione_in_piu_condizionata',
-        note:'Riferimento: serie registrata più pesante, non necessariamente allenante. Solo sullo stesso attrezzo, con tecnica stabile, recupero adeguato e almeno 2 ripetizioni in riserva; altrimenti consolida. Nessun incremento automatico di kg.'};
-    }).sort((a,b)=>b.date.localeCompare(a.date)||a.gym.localeCompare(b.gym)||a.equipment.localeCompare(b.equipment));
+      const decision=decideSetProgression(sets,bounds,Number(ex.sets)||Number(String(ex.dose||'').match(/^\s*(\d+)/)?.[1]));
+      return decision?{exercise:g.exercise,gym:g.gym,equipment:g.equipment,unit:g.unit,date,...decision}:null;
+    }).filter(Boolean).sort((a,b)=>b.date.localeCompare(a.date)||a.gym.localeCompare(b.gym)||a.equipment.localeCompare(b.equipment));
     return {exercise_id:ex.id,exercise:ex.name,dose:ex.dose,rest:ex.rest,
       references,untagged_records:matching.filter(x=>!equipmentIdentity(x.unita_carico)).length,
       status:references.length?'riferimento_attrezzo':matching.length?'storico_non_comparabile':'riferimento_da_registrare'};
   });
   return {previous_session_date:last?.data||null,cardio,strength,
     note:'Obiettivi verificabili, non prescrizioni automatiche. Recupero e qualità prima di aumentare volume o carico.'};
+}
+
+const EFFORT_TAG=' | CUT30_EFFORT_V1=';
+export function validateSetEffort(input={}){
+  const optional=(v,min,max,step=1)=>{
+    if(v===null||v===undefined||String(v).trim()==='')return null;
+    const n=Number(v);
+    if(!Number.isFinite(n)||n<min||n>max||!Number.isInteger(n/step))throw new Error('RIR/RPE non valido');
+    return n;
+  };
+  const type=String(input.tipo_serie||'non_specificata');
+  if(!['allenante','riscaldamento','non_specificata'].includes(type))throw new Error('Tipo serie non valido');
+  const rir=optional(input.rir,0,10),rpe=optional(input.rpe,1,10,0.5);
+  // RPE of a strength set uses the RIR-based scale only for RPE >= 6.
+  if(rir!==null&&rpe!==null&&rpe>=6&&Math.abs(rir-(10-rpe))>1)throw new Error('RIR e RPE incoerenti');
+  return {tipo_serie:type,rir,rpe};
+}
+export function encodeSetEffort(origin,input){
+  return String(origin||'').split(EFFORT_TAG)[0]+EFFORT_TAG+JSON.stringify(validateSetEffort(input));
+}
+export function readSetEffort(origin){
+  const raw=String(origin||'');
+  if(!raw.includes(EFFORT_TAG))return validateSetEffort();
+  try{return validateSetEffort(JSON.parse(raw.split(EFFORT_TAG).at(-1)));}
+  catch{return validateSetEffort();}
+}
+// Decisions are conditional and do not assume a machine has a particular increment.
+export function decideSetProgression(sets,bounds,plannedSets){
+  const tagged=sets.map(x=>({...x,effort:readSetEffort(x.origine)}));
+  const working=tagged.filter(x=>x.effort.tipo_serie==='allenante');
+  const unknown=tagged.filter(x=>x.effort.tipo_serie==='non_specificata');
+  const eligible=working.length?working:unknown;
+  const peak=[...eligible].sort((a,b)=>num(b.carico_kg)-num(a.carico_kg)||num(b.ripetizioni)-num(a.ripetizioni))[0];
+  if(!peak)return null;
+  const kg=num(peak.carico_kg),reps=num(peak.ripetizioni);
+  const known=working.filter(x=>x.effort.rir!==null||x.effort.rpe!==null);
+  const effort=peak.effort;
+  const strenuous=known.some(x=>(x.effort.rir!==null&&x.effort.rir<=1)||(x.effort.rpe!==null&&x.effort.rpe>=9));
+  const enough=Number.isInteger(plannedSets)&&plannedSets>0&&working.length>=plannedSets;
+  const sameLoad=working.every(x=>num(x.carico_kg)===kg);
+  const reserve=working.every(x=>x.effort.rir!==null&&x.effort.rir>=2&&(x.effort.rpe===null||x.effort.rpe<=8));
+  const atTop=Boolean(bounds)&&working.every(x=>num(x.ripetizioni)>=bounds.max);
+  let action='verifica_prima_di_progredire',next=null,loadIncrease=false;
+  let note='Riferimento non certificato come serie allenante o RIR mancante: verifica prima di aumentare. Non dedurre la fatica dal carico.';
+  if(strenuous){
+    action='consolida_o_riduci';
+    note='Sforzo elevato registrato (RIR 0–1 o RPE ≥9): non aumentare carico o ripetizioni; consolida o riduci se necessario.';
+  }else if(enough&&sameLoad&&reserve&&atTop&&kg>0){
+    action='incremento_carico_condizionato';loadIncrease=true;
+    note='Serie allenanti previste completate al limite alto con RIR ≥2. Solo se tecnica e recupero adeguati, prova il più piccolo incremento disponibile sullo stesso attrezzo, ripartendo dal limite basso. Nessun kg inventato.';
+  }else if(bounds&&reps>=bounds.min&&reps<bounds.max){
+    next=reps+1;action='una_ripetizione_in_piu_condizionata';
+    note=effort.rir!==null&&effort.rir>=2?'Prova una ripetizione in più allo stesso carico mantenendo almeno 2 RIR e tecnica stabile.':'RIR non sufficiente o non registrato: una ripetizione in più solo se puoi mantenere almeno 2 RIR, tecnica e recupero adeguati.';
+  }else if(working.length){
+    note='Consolida il range previsto. Per aumentare il carico servono tutte le serie allenanti previste allo stesso carico, al limite alto, con RIR ≥2.';
+  }
+  return {reference_kg:kg,reference_reps:reps,conditional_target_reps:next,action,load_increase_allowed:loadIncrease,reference_rir:effort.rir,reference_rpe:effort.rpe,working_sets:working.length,effort_sets:known.length,recorded_sets:sets.length,unknown_sets:unknown.length,note};
 }
