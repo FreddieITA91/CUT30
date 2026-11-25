@@ -126,8 +126,75 @@ function mergeRows(local,remote){const map=new Map();for(const r of remote){if(!
 function sheetRow(tab,arr){const rec={};TABLES[tab].forEach((k,i)=>{const v=arr[i]??'';rec[k]=(NUMERIC[tab]||[]).includes(k)?(v===''?'':n(v)):String(v)});return rec}
 async function connectGoogle(){if(!state.prefs.clientId){toast('Inserisci il Client ID OAuth nelle Impostazioni');switchPage('settings');return}if(!window.google?.accounts?.oauth2){toast('Google Identity Services non disponibile: verifica la connessione');return}let client;try{client=google.accounts.oauth2.initTokenClient({client_id:state.prefs.clientId,scope:'https://www.googleapis.com/auth/spreadsheets',callback:async result=>{if(result.error){toast('Accesso Google non riuscito: '+result.error);return}token=result.access_token;tokenExpires=Date.now()+(result.expires_in||3500)*1000;rememberGoogleSession();toast('Google collegato. Sincronizzazione in corso…');await sync()},error_callback:err=>{console.warn('CUT30 Google OAuth:',err?.type||err);const msg=err?.type==='popup_failed_to_open'?'La finestra Google non si apre. Consenti i popup e prova da Chrome normale.':err?.type==='popup_closed'?'Accesso Google interrotto. Se la pagina rimane bianca, apri CUT30 in Chrome normale e riprova.':'Accesso Google non completato. Prova da Chrome normale e controlla gli utenti di test OAuth.';toast(msg);switchPage('settings')}});client.requestAccessToken({prompt:state.lastSync?'':'consent'})}catch(err){console.error('CUT30 OAuth start:',err);toast('Google Login non avviato: verifica il Client ID OAuth e riprova da Chrome normale.')}}
 async function googleApi(path,method='GET',body){const res=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(state.prefs.sheetId)}${path}`,{method,headers:{Authorization:`Bearer ${token}`,...body?{'Content-Type':'application/json'}:{}},body:body?JSON.stringify(body):undefined});const data=await res.json().catch(()=>({}));if(!res.ok){if(res.status===401){token='';tokenExpires=0;forgetGoogleSession()}throw new Error(data.error?.message||`${res.status} ${res.statusText}`)}return data}
-async function sync(){if(syncBusy)return;if(!token||Date.now()>tokenExpires-30000){toast('Connetti il tuo account Google per sincronizzare');switchPage('settings');return}syncBusy=true;$('#sync-top').disabled=true;try{const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});for(const tab of Object.keys(TABLES))params.append('ranges',`'${tab}'!A1:O2000`);const remote=await googleApi(`/values:batchGet?${params}`);const merged={};const length={};for(let i=0;i<Object.keys(TABLES).length;i++){const tab=Object.keys(TABLES)[i],rows=remote.valueRanges?.[i]?.values||[];length[tab]=rows.length;const headers=TABLES[tab];if(rows.length&&rows[0].some((v,k)=>v!==headers[k]))throw new Error(`Schema errato nella scheda ${tab}`);const objects=rows.slice(1).filter(x=>x?.[0]!==''&&x?.[0]!=null).map(x=>sheetRow(tab,x));if(tab==='Config'){const map=new Map(objects.map(x=>[x.chiave,x]));for(const row of state.tables.Config){if(state.dirtyConfig.includes(row.chiave))map.set(row.chiave,row)}merged[tab]=[...map.values()]}else merged[tab]=tab==='Allenamenti'?normalizeTrainingRows(mergeRows(state.tables[tab],objects)):mergeRows(state.tables[tab],objects)}
-const out=[];for(const [tab,headers]of Object.entries(TABLES)){const entries=merged[tab],values=[headers,...entries.map(o=>headers.map(k=>o[k]??''))],need=Math.max(values.length,length[tab]);while(values.length<need)values.push(headers.map(()=>''));out.push({range:`'${tab}'!A1`,majorDimension:'ROWS',values})}
-await googleApi('/values:batchUpdate','POST',{valueInputOption:'RAW',data:out});state.tables=merged;state.dirtyConfig=[];state.lastSync=now();save();if(render())toast('Google Sheets sincronizzato con successo');else toast('Dati sincronizzati, ma la vista presenta un errore: prova un altro tab')}catch(err){console.error(err);toast('Sincronizzazione fallita: '+err.message)}finally{syncBusy=false;$('#sync-top').disabled=false}}
+async function sync(){
+  if(syncBusy)return;
+  if(!token||Date.now()>tokenExpires-30000){
+    toast('Connetti il tuo account Google per sincronizzare');
+    switchPage('settings');return;
+  }
+  syncBusy=true;
+  const syncButton=$('#sync-top');
+  if(syncButton)syncButton.disabled=true;
+  try{
+    const {planDeltaSync}=await import('./engine/sync-delta.mjs');
+    const tables=Object.keys(TABLES);
+    const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
+    for(const tab of tables)params.append('ranges',"'"+tab+"'!A1:O2000");
+    const remote=await googleApi('/values:batchGet?'+params.toString());
+    const before=Object.fromEntries(tables.map((tab,i)=>[tab,remote.valueRanges?.[i]?.values||[]]));
+    const planned=planDeltaSync({
+      headersByTab:TABLES,localTables:state.tables,remoteRanges:before,
+      dirtyConfig:state.dirtyConfig,lastSync:state.lastSync
+    });
+    if(planned.updates.length){
+      await googleApi('/values:batchUpdate','POST',{
+        valueInputOption:'RAW',data:planned.updates
+      });
+    }
+    for(const append of planned.appends){
+      await googleApi('/values/'+encodeURIComponent(append.range)+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',{
+        values:append.values
+      });
+    }
+    // Refresh from the single source of truth, and verify individual writes.
+    // Never clear or rewrite entire tabs to reconcile stale local state.
+    const afterResult=(planned.counts.updated||planned.counts.inserted)
+      ?await googleApi('/values:batchGet?'+params.toString()):remote;
+    const after=Object.fromEntries(tables.map((tab,i)=>[tab,afterResult.valueRanges?.[i]?.values||[]]));
+    for(const tab of tables){
+      const head=TABLES[tab],rows=after[tab]||[];
+      if(!rows.length||head.some((x,i)=>String(rows[0]?.[i]??'')!==x))
+        throw new Error('Verifica schema fallita nel foglio '+tab);
+    }
+    const changes=[
+      ...planned.updates.map(x=>({tab:x.range.match(/^'([^']+)'!/)[1],values:x.values[0]})),
+      ...planned.appends.flatMap(x=>x.values.map(values=>({tab:x.tab,values})))
+    ];
+    for(const change of changes){
+      const found=after[change.tab].slice(1).find(r=>String(r[0])===String(change.values[0]) &&
+        change.values.every((v,i)=>String(r[i]??'')===String(v??'')));
+      if(!found)throw new Error('Verifica post-salvataggio non superata: '+change.tab+
+        ' ID '+String(change.values[0])+'. Controlla il foglio prima di riprovare.');
+    }
+    for(const tab of tables){
+      const head=TABLES[tab];
+      const records=after[tab].slice(1).filter(r=>r&&r[0]!==''&&r[0]!=null)
+        .map(row=>sheetRow(tab,row));
+      state.tables[tab]=tab==='Allenamenti'?normalizeTrainingRows(records):records;
+    }
+    state.dirtyConfig=[];
+    state.lastSync=now();
+    save();
+    if(render())toast('Sincronizzazione sicura completata: '+planned.counts.updated+
+      ' righe aggiornate, '+planned.counts.inserted+' nuove.');
+    else toast('Sincronizzazione terminata, ma ricarica la vista.');
+  }catch(err){
+    console.error('CUT30 delta sync:',err);
+    toast('Sincronizzazione non completata: '+err.message);
+  }finally{
+    syncBusy=false;
+    if(syncButton)syncButton.disabled=false;
+  }
+}
 function init(){restoreGoogleSession();document.addEventListener('click',onDocClick);document.addEventListener('change',onDocChange);document.addEventListener('input',onDocInput);document.addEventListener('submit',onDocSubmit);document.addEventListener('change',e=>{if(e.target.id==='import-json')importBackup(e.target.files?.[0])});$('#modal-layer').addEventListener('click',e=>{if(e.target.id==='modal-layer')closeModal()});$('#sync-top').addEventListener('click',()=>sync());window.addEventListener('hashchange',()=>{let p=location.hash.slice(1);if(NAV.some(x=>x[0]===p)&&p!==currentPage){currentPage=p;render()}});currentPage=NAV.some(x=>x[0]===location.hash.slice(1))?location.hash.slice(1):'dashboard';render();if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(console.warn)}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
