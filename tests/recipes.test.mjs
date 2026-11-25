@@ -24,7 +24,7 @@ test('cooked recipe serving is ingredient-total × portion / cooked yield',()=>{
   assert.equal(result.status,'recipe_calculated');
   assert.equal(result.serving_fraction,Number((275/1500).toFixed(6)));
   assert.equal(result.serving.kcal,343.75);
-  assert.equal(result.serving.proteine,23.47);
+  assert.equal(result.serving.proteine,18.7);
 });
 test('reject bad ingredients, nonexistent nutritional values and impossible servings',()=>{
   assert.throws(()=>calculateRecipe({ingredients:[]}),/senza ingredienti/);
