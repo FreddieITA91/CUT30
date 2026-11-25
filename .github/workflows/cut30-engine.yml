@@ -40,6 +40,7 @@ jobs:
           node --check engine/publish-report.mjs
           node --check app.js
           node --check cut30-engine-bridge.js
+          node --check sw.js
       - name: Unit tests (synthetic data only)
         run: node --test tests/*.test.mjs
 
