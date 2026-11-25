@@ -186,7 +186,76 @@ export function suggestTrainingDraft(rawTables, asOf, options={}) {
     previous_comparable:last?{date:last.data,cardio_minutes:num(last.durata_cardio_min),weights_minutes:num(last.durata_pesi_min)}:null,
     cardio:{duration_min:duration,target_average_hr_bpm:mean,phases},
     core_minutes:program==='Cardio H + core'?15:0,
+    progression:buildProgression(rawTables,asOf,program,duration,options.exercises||[]),
     note:completed?'Seduta già conclusa: scheda di riferimento, non ripetere automaticamente.':
       'Riferimenti FC indicativi, non zone personali validate. Regolare velocità e pendenza con fatica percepita, recupero e sintomi; non inseguire picchi. Nessuna sostituzione automatica del programma.'
   };
+}
+
+// Progression is a proposed next objective, not proof of physiological adaptation.
+// Never compare untagged/ambiguous equipment, or infer RIR from load or heart rate.
+const normalized = value => String(value||'').trim().toLowerCase().replace(/\s+/g,' ');
+function equipmentIdentity(value) {
+  const match=String(value||'').trim().match(/^(kg macchina|kg per mano|kg totale)\s*\|\s*palestra\s+([^|]+)\s*\|\s*attrezzo\s+([^|]+)$/i);
+  if (!match || !match[2].trim() || !match[3].trim()) return null;
+  return {unit:match[1].toLowerCase(),gym:match[2].trim(),equipment:match[3].trim()};
+}
+function repLimits(dose) {
+  const m=String(dose||'').match(/^\s*\d+\s*[×x]\s*(\d+)(?:[–-](\d+))?(?:\s+per lato)?\s*$/i);
+  if(!m) return null;
+  return {min:Number(m[1]),max:Number(m[2]||m[1])};
+}
+export function buildProgression(rawTables, asOf, program, cardioTarget, exercises=[]) {
+  if (!validDate(asOf)) throw new Error('Data progressione non valida');
+  const history=canonicalWorkouts(rowsFromSheet(rawTables.Allenamenti||[],'Allenamenti'))
+    .filter(x=>x.data<asOf&&x.stato==='completato'&&x.programma===program);
+  const last=history.at(-1);
+  const cardioRows=history.filter(x=>num(x.durata_cardio_min)>0).slice(-3);
+  const previous=cardioRows.at(-1);
+  const actual=previous?num(previous.durata_cardio_min):null;
+  const cardio={target_minutes:cardioTarget,previous_minutes:actual,
+    previous_date:previous?.data||null,previous_three_minutes:cardioRows.map(x=>({date:x.data,minutes:num(x.durata_cardio_min)})),
+    remaining_to_planned:actual===null?null:Math.max(0,cardioTarget-actual),
+    objective:!cardioTarget?'recupero':actual===null?'stabilisci_riferimento':actual<cardioTarget?'completa_volume_programmato':'consolida_efficienza',
+    note:'Non aumentare la FC per inseguire la progressione. Confrontare distanza/ritmo solo con modalità, protocollo e FC comparabili; la FC aggregata non identifica la singola attività.'};
+  const previousDates=new Set(history.map(x=>x.data));
+  const rows=byIdLatest(rowsFromSheet(rawTables.Carichi||[],'Carichi')).filter(x=>
+    x.programma===program&&previousDates.has(x.data)&&nondeleted(x)&&
+    Number.isInteger(num(x.numero_serie))&&num(x.numero_serie)>0&&num(x.carico_kg)!==null&&num(x.carico_kg)>=0&&
+    Number.isInteger(num(x.ripetizioni))&&num(x.ripetizioni)>0&&num(x.ripetizioni)<=100);
+  const strength=exercises.map(ex=>{
+    const allowed=String(ex.name||'').split('/').map(normalized).filter(Boolean);
+    const bounds=repLimits(ex.dose);
+    const matching=rows.filter(x=>allowed.includes(normalized(x.esercizio)));
+    const groups=new Map();
+    for(const x of matching){
+      const ident=equipmentIdentity(x.unita_carico);
+      if(!ident)continue;
+      const key=JSON.stringify([normalized(x.esercizio),normalized(ident.unit),normalized(ident.gym),normalized(ident.equipment)]);
+      const group=groups.get(key)||{...ident,exercise:x.esercizio,rows:[]};
+      group.rows.push(x);groups.set(key,group);
+    }
+    const references=[...groups.values()].map(g=>{
+      const date=g.rows.map(x=>x.data).sort().at(-1);
+      const sameDay=g.rows.filter(x=>x.data===date);
+      const bySet=new Map();
+      for(const x of sameDay){
+        const old=bySet.get(num(x.numero_serie));
+        if(!old||String(x.updated_at||'')>=String(old.updated_at||''))bySet.set(num(x.numero_serie),x);
+      }
+      const sets=[...bySet.values()].sort((a,b)=>num(a.numero_serie)-num(b.numero_serie));
+      const peak=[...sets].sort((a,b)=>num(b.carico_kg)-num(a.carico_kg)||num(b.ripetizioni)-num(a.ripetizioni))[0];
+      const reps=num(peak.ripetizioni),kg=num(peak.carico_kg);
+      const next=bounds&&reps>=bounds.min&&reps<bounds.max?reps+1:null;
+      return {exercise:g.exercise,gym:g.gym,equipment:g.equipment,unit:g.unit,date,
+        recorded_sets:sets.length,reference_kg:kg,reference_reps:reps,
+        conditional_target_reps:next,action:next===null?'verifica_prima_di_progredire':'una_ripetizione_in_piu_condizionata',
+        note:'Riferimento: serie registrata più pesante, non necessariamente allenante. Solo sullo stesso attrezzo, con tecnica stabile, recupero adeguato e almeno 2 ripetizioni in riserva; altrimenti consolida. Nessun incremento automatico di kg.'};
+    }).sort((a,b)=>b.date.localeCompare(a.date)||a.gym.localeCompare(b.gym)||a.equipment.localeCompare(b.equipment));
+    return {exercise_id:ex.id,exercise:ex.name,dose:ex.dose,rest:ex.rest,
+      references,untagged_records:matching.filter(x=>!equipmentIdentity(x.unita_carico)).length,
+      status:references.length?'riferimento_attrezzo':matching.length?'storico_non_comparabile':'riferimento_da_registrare'};
+  });
+  return {previous_session_date:last?.data||null,cardio,strength,
+    note:'Obiettivi verificabili, non prescrizioni automatiche. Recupero e qualità prima di aumentare volume o carico.'};
 }
