@@ -20,6 +20,12 @@ on:
       - 'index.html'
       - '.github/workflows/cut30-engine.yml'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Read-only connection check or publish derived daily report'
+        type: choice
+        options: [check_connection, publish]
+        default: check_connection
   schedule:
     # 07:20 UTC daily = 08:20 Rome winter / 09:20 Rome summer.
     - cron: '20 7 * * *'
@@ -63,13 +69,37 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     needs: tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Check activation configuration
+        env:
+          WIF_PROVIDER: ${{ vars.CUT30_WIF_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.CUT30_SERVICE_ACCOUNT }}
+          SPREADSHEET_ID: ${{ secrets.CUT30_SPREADSHEET_ID }}
+        run: |
+          if [[ -z "$WIF_PROVIDER" || -z "$SERVICE_ACCOUNT" || -z "$SPREADSHEET_ID" ]]; then
+            echo "::error::CUT30 activation missing: configure WIF provider, service account and spreadsheet ID."
+            exit 1
+          fi
+      - name: Authenticate to Google with short-lived OIDC token
+        id: google_auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.CUT30_WIF_PROVIDER }}
+          service_account: ${{ vars.CUT30_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/spreadsheets
+          create_credentials_file: false
+          export_environment_variables: false
       - name: Generate daily report and cycle (no raw data in logs)
         env:
-          CUT30_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.CUT30_GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CUT30_GOOGLE_ACCESS_TOKEN: ${{ steps.google_auth.outputs.access_token }}
           CUT30_SPREADSHEET_ID: ${{ secrets.CUT30_SPREADSHEET_ID }}
+          CUT30_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'publish' }}
         run: node engine/publish-report.mjs
