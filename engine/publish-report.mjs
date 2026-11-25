@@ -1,9 +1,8 @@
 /**
  * Daily CUT30 analytics — fetches private Sheets with a service account and
  * upserts ONLY a derived row in the same private spreadsheet. No user data in Git.
- * No third-party Node packages required; Node 22 native fetch + crypto.
+ * No third-party Node packages required; Node 22 native fetch; short-lived OIDC access token.
  */
-import {createSign} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {buildDailyCycle,romeDate,cycleRow,planDailyWrite,CYCLE_HEADERS} from './orchestrator.mjs';
 
@@ -16,34 +15,16 @@ const columns = [
   'voto_medio_14g','avvisi','versione_engine'
 ];
 
-async function getToken(credentials) {
-  const now = Math.floor(Date.now()/1000);
-  const b64 = obj => Buffer.from(JSON.stringify(obj)).toString('base64url');
-  const url = 'https://oauth2.googleapis.com/token';
-  const unsigned = b64({alg:'RS256',typ:'JWT'}) + '.' + b64({
-    iss:credentials.client_email,scope:'https://www.googleapis.com/auth/spreadsheets',
-    aud:url,iat:now,exp:now+3600
-  });
-  const sign=createSign('RSA-SHA256');sign.update(unsigned);sign.end();
-  const jwt=unsigned+'.'+sign.sign(credentials.private_key).toString('base64url');
-  const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion:jwt})});
-  if(!res.ok)throw new Error('Google OAuth status '+res.status);
-  const body=await res.json();
-  if(!body.access_token)throw new Error('Google OAuth token missing');
-  return body.access_token;
+export function activationConfig(env){
+  const token=env.CUT30_GOOGLE_ACCESS_TOKEN;
+  const spreadsheetId=env.CUT30_SPREADSHEET_ID;
+  const mode=env.CUT30_MODE||'publish';
+  if(!token||!spreadsheetId)throw Error('OIDC configuration missing');
+  if(!['publish','check_connection'].includes(mode))throw Error('Invalid mode');
+  return {token,spreadsheetId,mode};
 }
-
 async function main() {
-  const rawCred=process.env.CUT30_GOOGLE_SERVICE_ACCOUNT_JSON;
-  const spreadsheetId=process.env.CUT30_SPREADSHEET_ID;
-  if(!rawCred || !spreadsheetId){
-    console.log('CUT30_AUTO: DISABLED — configure GitHub Actions secrets to enable daily private report.');
-    return;
-  }
-  const cred=JSON.parse(rawCred);
-  if(!cred.client_email || !cred.private_key)throw new Error('Service account credentials invalid');
-  const token=await getToken(cred);
+  const {token,spreadsheetId,mode}=activationConfig(process.env);
   const root='https://sheets.googleapis.com/v4/spreadsheets/'+encodeURIComponent(spreadsheetId);
   async function api(url,options={}) {
     const res=await fetch(url,{...options,headers:{Authorization:'Bearer '+token,
@@ -51,11 +32,11 @@ async function main() {
     if(!res.ok)throw new Error('Google Sheets API status '+res.status);
     return res.status===204?{}:res.json();
   }
-  await publishDailyCycle(api,root,romeDate(),new Date().toISOString());
-  console.log('CUT30_AUTO: private daily report and cycle verified. No personal metrics printed.');
+  const result=await publishDailyCycle(api,root,romeDate(),new Date().toISOString(),{dryRun:mode==='check_connection'});
+  console.log(result.status==='read_verified'?'CUT30_OIDC_READ_OK — schema and private inputs verified; no writes.':'CUT30_AUTO: private daily report and cycle verified. No personal metrics printed.');
 }
 
-export async function publishDailyCycle(api,root,asOf,at){
+export async function publishDailyCycle(api,root,asOf,at,{dryRun=false}={}){
   const meta=await api(root+'?fields=sheets.properties.title');
   const titles=new Set(meta.sheets?.map(x=>x.properties?.title)||[]);
   const required=['Config','Nutrizione','Allenamenti','Esercizi','Carichi','Misure','Valutazioni','Calendario'];
@@ -83,6 +64,7 @@ export async function publishDailyCycle(api,root,asOf,at){
     const existing=titles.has(o.title)?(await api(o.read)).values||[]:[];
     o.write=planDailyWrite(existing,o.head,o.row);
   }
+  if(dryRun)return {status:'read_verified',date:asOf,outputs:outputs.map(o=>o.title)};
   for(const o of outputs){
     if(!titles.has(o.title))await api(root+':batchUpdate',{method:'POST',body:JSON.stringify({requests:[{addSheet:{properties:{title:o.title,gridProperties:{rowCount:1000,columnCount:o.head.length,frozenRowCount:1}}}}]})});
     const current=(await api(o.read)).values||[];

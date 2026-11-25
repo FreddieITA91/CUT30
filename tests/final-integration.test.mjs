@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {publishDailyCycle} from '../engine/publish-report.mjs';
+import {publishDailyCycle,activationConfig} from '../engine/publish-report.mjs';
 import {TABLE_HEADERS} from '../engine/cut30.mjs';
 const day='2027-06-07',at=day+'T07:20:00Z';
 const source=()=>new Map([['Config',[['chiave','valore'],['data_inizio',day]]],...Object.entries(TABLE_HEADERS).map(([k,v])=>[k,[v]]),['Calendario',[['id','data','programma','stato','note','updated_at']]]]);
@@ -51,4 +51,16 @@ test('PWA avoids oversized hardcoded reads and requires unique saved IDs',()=>{
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8'),bridge=readFileSync(new URL('../cut30-engine-bridge.js',import.meta.url),'utf8');
  assert.ok(!app.includes('A1:O2000'));assert.ok(!bridge.includes('A1:P4000'));
  assert.ok(bridge.includes("Carichi:'J'"));assert.ok(bridge.includes('verified.length!==1'));
+});
+
+test('OIDC read-only acceptance checks inputs and writes nothing',async()=>{
+ const t=source(),{api,writes}=transport(t);
+ const r=await publishDailyCycle(api,'https://mock.invalid/sheet',day,at,{dryRun:true});
+ assert.equal(r.status,'read_verified');assert.deepEqual(writes,[]);assert.equal(t.has('CicloAuto'),false);
+});
+test('activation fails closed without short-lived credentials and rejects unexpected mode',()=>{
+ assert.throws(()=>activationConfig({}),/missing/);
+ assert.throws(()=>activationConfig({CUT30_GOOGLE_SERVICE_ACCOUNT_JSON:'legacy',CUT30_SPREADSHEET_ID:'fake'}),/missing/);
+ assert.throws(()=>activationConfig({CUT30_GOOGLE_ACCESS_TOKEN:'synthetic',CUT30_SPREADSHEET_ID:'fake',CUT30_MODE:'unknown'}),/Invalid mode/);
+ assert.equal(activationConfig({CUT30_GOOGLE_ACCESS_TOKEN:'synthetic',CUT30_SPREADSHEET_ID:'fake'}).mode,'publish');
 });
