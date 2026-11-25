@@ -130,7 +130,7 @@
   async function saveRow(table,rec){
     if(!connected())throw new Error('Account Google non collegato o sessione scaduta');
     const head=headers[table];
-    const url="/values/"+encodeURIComponent("'"+table+"'!A1:P4000");
+    const url="/values/"+encodeURIComponent("'"+table+"'!A1:P4000")+"?valueRenderOption=UNFORMATTED_VALUE";
     const data=await googleApi(url);
     const values=data.values||[];
     if(!values.length || head.some((x,i)=>String(values[0][i]||'')!==x))throw new Error('Schema inatteso: '+table+'. Nessuna modifica eseguita.');
