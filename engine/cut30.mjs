@@ -136,16 +136,57 @@ export function buildReport(rawTables, asOf) {
   };
 }
 
-export function suggestTrainingDraft(rawTables, asOf) {
-  const workouts = canonicalWorkouts(rowsFromSheet(rawTables.Allenamenti || [],'Allenamenti'))
-    .filter(x=>x.stato==='completato' && x.data<=asOf && /\b(Upper|Lower)\s*[AB]\b/i.test(x.programma || ''));
-  const programs=['Upper A','Lower A','Upper B','Lower B'];
-  const last = Object.fromEntries(programs.map(p=>[p,workouts.filter(x=>x.programma===p).at(-1)?.data || null]));
-  const priority = [...programs].sort((a,b)=>(last[a]||'').localeCompare(last[b]||''));
-  const yesterday=new Date(dateMs(asOf)-86400000).toISOString().slice(0,10);
-  const lastWorkout=workouts.at(-1);
-  const preferred=priority.find(p=>!lastWorkout || (p.startsWith('Upper')!==String(lastWorkout.programma).startsWith('Upper') || lastWorkout.data<yesterday));
-  return {date:asOf,status:'bozza_da_confermare',program:preferred||priority[0],
-    cardio:{duration_min:25,target_average_hr_bpm:135,indicative_range_bpm:[130,140]},
-    note:'Bozza automatica: verificare recupero, dolore, attrezzatura disponibile e piano settimanale prima di eseguire.'};
+// The calendar is authoritative; missed sessions are observations, not automatic substitutions.
+const TRAINING_WEEK = ['Upper A','Lower A','Cardio H + core','Upper B','Lower B','Cardio Z','Recupero'];
+const DAY_MS = 86400000;
+const phase = (label, minutes, hr, range, speed, incline) => ({
+  label, duration_min:minutes, target_average_hr_bpm:hr, indicative_range_bpm:range,
+  treadmill_speed_kmh:speed, incline_pct:incline
+});
+function cardioPhases(program) {
+  if (program==='Recupero') return [];
+  if (program==='Cardio H + core') return [
+    phase('Riscaldamento',5,120,[115,125],[5,5.5],2),
+    phase('Moderata',20,135,[130,140],[6,6.5],4),
+    phase('Sostenuta',20,145,[140,150],[6,6.5],5),
+    phase('Consolidamento',5,135,[130,140],[5.5,6],3),
+    phase('Defaticamento',5,120,[115,125],[4.5,5],0)
+  ];
+  if (program==='Cardio Z') return [
+    phase('Riscaldamento',5,120,[115,125],[5,5.5],1),
+    phase('Continuo moderato',45,135,[130,140],[5.5,6.5],3),
+    phase('Defaticamento',5,120,[115,125],[4.5,5],0)
+  ];
+  return [
+    phase('Riscaldamento',5,120,[115,125],[5,5.5],1),
+    phase('Moderata',program.startsWith('Lower')?20:15,135,[130,140],[5.5,6.5],3),
+    phase('Defaticamento',5,120,[115,125],[4.5,5],0)
+  ];
+}
+export function suggestTrainingDraft(rawTables, asOf, options={}) {
+  if (!validDate(asOf) || new Date(dateMs(asOf)).toISOString().slice(0,10)!==asOf)
+    throw new Error('Data scheda non valida');
+  const start=options.start_date || '2026-11-02';
+  if (!validDate(start) || new Date(dateMs(start)).toISOString().slice(0,10)!==start)
+    throw new Error('Data inizio non valida');
+  const offset=Math.round((dateMs(asOf)-dateMs(start))/DAY_MS);
+  const scheduled=TRAINING_WEEK[((offset%7)+7)%7];
+  const program=options.program || scheduled;
+  if (!TRAINING_WEEK.includes(program)) throw new Error('Programma non riconosciuto');
+  const workouts=canonicalWorkouts(rowsFromSheet(rawTables.Allenamenti || [],'Allenamenti'));
+  const completed=workouts.find(x=>x.data===asOf && x.stato==='completato');
+  const previous=workouts.filter(x=>x.data<asOf && x.stato==='completato');
+  const last=previous.filter(x=>x.programma===program).at(-1);
+  const phases=cardioPhases(program);
+  const duration=phases.reduce((sum,p)=>sum+p.duration_min,0);
+  const mean=duration?round(phases.reduce((sum,p)=>sum+p.duration_min*p.target_average_hr_bpm,0)/duration,1):null;
+  return {
+    date:asOf,status:completed?'giornata_gia_conclusa':'bozza_da_confermare',
+    program,source:options.program?'calendario_esplicito':'ciclo_settimanale',
+    previous_comparable:last?{date:last.data,cardio_minutes:num(last.durata_cardio_min),weights_minutes:num(last.durata_pesi_min)}:null,
+    cardio:{duration_min:duration,target_average_hr_bpm:mean,phases},
+    core_minutes:program==='Cardio H + core'?15:0,
+    note:completed?'Seduta già conclusa: scheda di riferimento, non ripetere automaticamente.':
+      'Riferimenti FC indicativi, non zone personali validate. Regolare velocità e pendenza con fatica percepita, recupero e sintomi; non inseguire picchi. Nessuna sostituzione automatica del programma.'
+  };
 }

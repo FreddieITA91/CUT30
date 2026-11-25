@@ -5,11 +5,19 @@ on:
     paths:
       - 'engine/**'
       - 'tests/**'
+      - 'app.js'
+      - 'cut30-engine-bridge.js'
+      - 'sw.js'
+      - 'index.html'
       - '.github/workflows/cut30-engine.yml'
   pull_request:
     paths:
       - 'engine/**'
       - 'tests/**'
+      - 'app.js'
+      - 'cut30-engine-bridge.js'
+      - 'sw.js'
+      - 'index.html'
       - '.github/workflows/cut30-engine.yml'
   workflow_dispatch:
   schedule:

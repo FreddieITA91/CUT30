@@ -45,3 +45,6 @@ Il cron è alle 07:20 UTC (08:20 a Roma in inverno, 09:20 in estate); l'esecuzio
 6. **Da sviluppare:** notifiche, report 7/14/30 giorni, sincronizzazione offline più robusta e gestione conflitti guidata.
 
 Per accesso multiutente e transazioni ad alta frequenza sarà opportuno passare a un database con API e autenticazione dedicate, mantenendo GitHub Actions per calcolo periodico, non come database.
+
+## Schede calendarizzate (2.2)
+La bozza usa il programma effettivo del calendario PWA; in assenza di override usa il ciclo settimanale dalla data di inizio. Le sedute saltate non producono sostituzioni automatiche. Ogni fase cardio ha durata, FC media indicativa, intervallo, velocità e pendenza modificabili durante l'esecuzione. Le sedute già concluse sono segnalate e non vanno ripetute automaticamente. Le durate sono valori di partenza, non prescrizioni individuali validate; la progressione personalizzata per attrezzo resta da sviluppare. Nessuna bozza scrive dati personali o sessioni svolte.
