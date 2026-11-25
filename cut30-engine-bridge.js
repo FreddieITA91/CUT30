@@ -3,7 +3,7 @@
    Only explicit form submissions write a single identified row. */
 (function cut30EngineBridge(){
   'use strict';
-  let engine=null, recipeEngine=null, cardioEngine=null, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
+  let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
   const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[]};
   const headers={
     Carichi:['id','data','programma','esercizio','numero_serie','carico_kg','ripetizioni','unita_carico','origine','updated_at'],
@@ -145,12 +145,22 @@
     if(saved.length!==1||head.some((k,i)=>String(saved[0][i]??'')!==String(rec[k]??'')))throw new Error('Verifica scrittura non riuscita; aggiorna prima di riprovare');
     await loadCardio();render();toast('Segmento cardio salvato e verificato');
   }
+  function learningPanel(suggest){
+    if(!suggest||suggest.status==='giornata_gia_conclusa')return '';
+    try{
+      const r=learningEngine.reviewTrainingHistory({Allenamenti:state.tables.Allenamenti,CardioSegmenti:cardioLoaded?cache.CardioSegmenti:[],Valutazioni:loadedAt?cache.Valutazioni:[]},suggest);
+      return '<div class="small-title">Apprendimento adattivo · '+h(r.program)+'</div>'+
+        '<p class="sm">Sedute precedenti comparabili: '+r.observations.length+' · volume sotto riferimento attuale: '+r.volume.below_reference+'/'+r.volume.observed+' · FC cardio verificabile: '+r.cardio_hr.observed+'</p>'+
+        r.observations.map(o=>'<p class="tiny muted">'+h(o.date)+' · '+(o.minutes??'—')+' min · FC cardio '+(o.hr_mean_cardio??'—')+' · voto '+(o.rating??'—')+'</p>').join('')+
+        r.actions.map(a=>'<p class="sm">'+h(a.text)+'</p>').join('')+'<p class="tiny muted">'+h(r.note)+'</p>';
+    }catch(err){return formatWarn('Analisi storico non disponibile: '+err.message);}
+  }
   function trainingPanel(){
     const program=programFor(selectedDate);
     const suggest=engine?engine.suggestTrainingDraft({Allenamenti:state.tables.Allenamenti,Carichi:cache.Carichi},selectedDate,{program,start_date:cfg('data_inizio')||'2026-11-02',exercises:/^(Upper|Lower) /.test(program)?WORKOUTS[program]:[]}):null;
     const mySets=cache.Carichi.filter(r=>r.data===selectedDate);
     return '<section class="panel cut30-engine"><div class="panel-head"><div><h2 class="section-title">CUT30 Engine · Serie e carichi</h2><p class="section-subtitle">Salvataggio puntuale su Google Sheets, senza riscrivere il diario</p></div><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      (suggest?cardioDraft(suggest)+progressionDraft(suggest):'')+
+      (suggest?cardioDraft(suggest)+progressionDraft(suggest)+learningPanel(suggest):'')+
       '<form id="cut30-set-form" class="stack"><div class="form-row">'+
       '<div class="field"><label>Esercizio</label><input name="esercizio" required placeholder="Es. Leg press"></div>'+
       '<div class="field"><label>Numero serie</label><input name="serie" type="number" min="1" max="25" value="1" required></div>'+
@@ -323,7 +333,7 @@
   }
   async function init(){
     try{
-      [engine,recipeEngine,cardioEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs')]);
+      [engine,recipeEngine,cardioEngine,learningEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs')]);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);
