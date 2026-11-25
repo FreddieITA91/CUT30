@@ -57,7 +57,8 @@ async function main() {
   if(required.some(t=>!titles.has(t)))throw Error('Input required tab missing');
   const input=[...required,...optional.filter(t=>titles.has(t))];
   const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-  for(const t of input)params.append('ranges',"'"+t+"'!A:O");
+  const endByTab={Config:'B',Nutrizione:'M',Allenamenti:'M',Esercizi:'F',Carichi:'J',Misure:'F',Valutazioni:'L',Calendario:'F',CardioSegmenti:'O',SchedeConfermate:'F',AuditPrestazioni:'H'};
+  for(const t of input)params.append('ranges',"'"+t+"'!A:"+endByTab[t]);
   const result=await api(root+'/values:batchGet?'+params);
   if(result.valueRanges?.length!==input.length)throw Error('Input read incomplete');
   const tables=Object.fromEntries(input.map((k,i)=>[k,result.valueRanges[i].values||[]]));
