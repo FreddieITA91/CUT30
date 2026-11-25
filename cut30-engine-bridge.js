@@ -92,7 +92,7 @@
     return '<div class="small-title">Progressione dallo storico</div><p class="sm">'+h(message)+'</p><p class="tiny muted">'+h(c.note)+'</p>'+
       (!loadedAt&&p.strength.length?'<p class="sm muted">Carichi privati non caricati: collega Google e aggiorna per visualizzare i riferimenti.</p>':'')+
       p.strength.map(ex=>'<div class="entry"><div class="entry-main"><strong>'+h(ex.exercise)+'</strong><small>'+h(ex.dose)+' · recupero '+h(ex.rest)+'</small>'+
-      (ex.references.length?ex.references.map(r=>'<p class="tiny">'+h(r.exercise)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+' · '+h(r.date)+': '+h(String(r.reference_kg))+' '+h(r.unit)+' × '+h(String(r.reference_reps))+' reps. '+(r.conditional_target_reps===null?'Consolida/verifica prima di progredire.':'Obiettivo condizionato: '+r.conditional_target_reps+' reps allo stesso carico.')+' '+h(r.note)+'</p>').join(''):
+      (ex.references.length?ex.references.map(r=>'<p class="tiny">'+h(r.exercise)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+' · '+h(r.date)+': '+h(String(r.reference_kg))+' '+h(r.unit)+' × '+h(String(r.reference_reps))+' reps. '+(r.load_increase_allowed?'Incremento minimo disponibile condizionato.':r.conditional_target_reps===null?'Consolida/verifica prima di progredire.':'Obiettivo condizionato: '+r.conditional_target_reps+' reps allo stesso carico.')+' RIR '+(r.reference_rir??'—')+' · RPE '+(r.reference_rpe??'—')+'.'+' '+h(r.note)+'</p>').join(''):
       '<p class="tiny muted">'+(ex.status==='storico_non_comparabile'?'Storico senza identificazione attrezzo: registrare riferimento comparabile.':'Nessun riferimento comparabile disponibile.')+'</p>')+'</div></div>').join('');
   }
   async function loadCardio(){
@@ -156,6 +156,9 @@
       '<div class="field"><label>Numero serie</label><input name="serie" type="number" min="1" max="25" value="1" required></div>'+
       '<div class="field"><label>Carico (kg dichiarati)</label><input name="kg" type="number" min="0" step="0.25" required></div>'+
       '<div class="field"><label>Ripetizioni</label><input name="reps" type="number" min="1" max="100" required></div>'+
+      '<div class="field"><label>Tipo serie</label><select name="tipo_serie"><option value="non_specificata">Non specificata</option><option value="allenante">Allenante</option><option value="riscaldamento">Riscaldamento</option></select></div>'+
+      '<div class="field"><label>RIR (ripetizioni in riserva)</label><input name="rir" type="number" min="0" max="10" step="1" placeholder="Facoltativo"></div>'+
+      '<div class="field"><label>RPE (sforzo percepito serie)</label><input name="rpe" type="number" min="1" max="10" step="0.5" placeholder="Facoltativo"></div>'+
       '<div class="field"><label>Palestra</label><select name="palestra"><option value="A">Palestra A · con piscina</option><option value="B">Palestra B · senza piscina</option></select></div>'+
       '<div class="field"><label>Attrezzo (identificativo)</label><input name="attrezzo" required placeholder="Es. leg-press-45"></div>'+
       '<div class="field"><label>Tipo peso</label><select name="unita"><option value="kg macchina">kg macchina</option><option value="kg per mano">kg per mano</option><option value="kg totale">kg totale</option></select></div></div>'+
@@ -236,7 +239,7 @@
       id:'s-'+selectedDate.replaceAll('-','')+'-'+slug(exercise)+'-'+slug(gym+'-'+eq)+'-'+number,
       data:selectedDate,programma:programFor(selectedDate),esercizio:exercise,numero_serie:number,
       carico_kg:kg,ripetizioni:reps,unita_carico:unit,
-      origine:'Confermato da utente PWA CUT30 Engine. Kg dichiarati, non confrontare macchine differenti.',
+      origine:engine.encodeSetEffort('Confermato da utente PWA CUT30 Engine. Kg dichiarati, non confrontare macchine differenti.',{tipo_serie:data.get('tipo_serie'),rir:data.get('rir'),rpe:data.get('rpe')}),
       updated_at:new Date().toISOString()
     };
     await saveRow('Carichi',rec);
