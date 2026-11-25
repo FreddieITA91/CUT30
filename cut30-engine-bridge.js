@@ -4,7 +4,7 @@
 (function cut30EngineBridge(){
   'use strict';
   let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, planEngine=null, auditEngine=null, auditSaving=false, planLoaded=false, planSaving=false, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
-  const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[],SchedeConfermate:[]};
+  const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[],SchedeConfermate:[],CicloAuto:[]};
   const headers={
     Carichi:['id','data','programma','esercizio','numero_serie','carico_kg','ripetizioni','unita_carico','origine','updated_at'],
     Nutrizione:['id','data','pasto','alimento','quantita','unita','kcal','proteine','carboidrati','grassi','fibre','qualita','updated_at']
@@ -39,6 +39,10 @@
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
       try{await loadPlans();}catch(err){planLoaded=false;cache.SchedeConfermate=[];console.warn('Plan archive unavailable');}
+      try{
+        const meta=await googleApi('?fields=sheets.properties.title');
+        cache.CicloAuto=meta.sheets?.some(x=>x.properties.title==='CicloAuto')?parseTable((await googleApi('/values/'+encodeURIComponent("'CicloAuto'!A:I")+'?valueRenderOption=UNFORMATTED_VALUE')).values||[]):[];
+      }catch{cache.CicloAuto=[];}
       loadedAt=Date.now();
       if(engine)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
@@ -53,6 +57,7 @@
     },localDate());}catch(err){console.warn('CUT30 report:',err.message);return null;}
   }
   function summary(){
+    const cycle=cache.CicloAuto.slice().sort((x,y)=>String(y.data_analisi).localeCompare(String(x.data_analisi)))[0];
     const a=report();
     const row=cache.AnalisiAuto.slice().sort((x,y)=>String(y.data_analisi).localeCompare(String(x.data_analisi)))[0];
     if(!a)return formatWarn('Motore analitico in caricamento.');
@@ -64,6 +69,7 @@
       '<div class="stat"><div class="label">Serie confermate</div><div class="number">'+(loadedAt?fmtN(a.activity.recorded_sets):'—')+'</div></div>'+
       '<div class="stat"><div class="label">Voto medio</div><div class="number">'+(!loadedAt||a.activity.average_rating===null?'—':fmtN(a.activity.average_rating,2)+'/5')+'</div></div>'+
       '<div class="stat"><div class="label">Trend peso PRE</div><div class="number">'+(a.weight_pre.kg_per_week===null?'—':fmtN(a.weight_pre.kg_per_week,2)+' kg/sett')+'</div></div></div>'+
+      (cycle?'<p class="sm">Ultimo ciclo automatico: '+h(cycle.data_analisi)+' · prossima scheda '+h(cycle.data_scheda)+' '+h(cycle.programma||'')+' · '+h(cycle.stato_scheda)+' · audit valutabili '+h(String(cycle.audit_valutabili))+'</p>':'<p class="tiny muted">Ciclo automatico server non ancora disponibile.</p>')+
       '<p class="tiny muted">Calorie stimate dal tracker: '+fmtN(a.activity.tracker_estimated_kcal)+' kcal (NON rappresentano il deficit).</p>'+
       (a.warnings.length?'<div class="warning-note">'+a.warnings.map(w=>'<p>'+h(w)+'</p>').join('')+'</div>':'')+
       '<p class="tiny muted">Analisi su dati locali sincronizzati e carichi privati. '+(row?'Ultimo report GitHub Actions: '+h(row.data_analisi)+'.':'Report server-side non ancora disponibile.')+

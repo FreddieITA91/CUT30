@@ -47,6 +47,8 @@ jobs:
           node --check engine/learning.mjs
           node --check engine/training-plan.mjs
           node --check engine/performance-audit.mjs
+          node --check engine/orchestrator.mjs
+          node --check engine/workout-catalog.mjs
           node --check engine/recipes.mjs
           node --check engine/sync-delta.mjs
           node --check engine/publish-report.mjs
@@ -66,7 +68,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Generate daily report (no raw data in logs)
+      - name: Generate daily report and cycle (no raw data in logs)
         env:
           CUT30_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.CUT30_GOOGLE_SERVICE_ACCOUNT_JSON }}
           CUT30_SPREADSHEET_ID: ${{ secrets.CUT30_SPREADSHEET_ID }}
