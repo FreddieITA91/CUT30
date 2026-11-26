@@ -483,25 +483,53 @@
       '<p class="wl-save-feedback '+(feedback?.error?'wl-save-error':'')+'" data-wl-feedback role="status">'+(feedback?h(feedback.message):future?'Non puoi registrare una prestazione futura.':!connected()?'Google non collegato. Premi Salva serie per ricollegarti.':loadFailure?h(loadFailure):!loadReady()?'Lo storico sarà verificato al salvataggio.':'Indica carico e ripetizioni. Macchinario, RIR e RPE facoltativi.')+'</p></form></div>'+
       '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+(refs?'<details class="wl-advanced"><summary>Riferimenti carico</summary>'+refs+'</details>':'')+'</div></article>';
   }
+  const closureOpen=new Set();
+  function briefing(program,suggest){
+    let action='';
+    try{
+      const saved=cache.SchedeConfermate.filter(r=>r.data===selectedDate);
+      if(saved.length===1)action='<small>Obiettivi originali confermati.</small>';
+      else if(!isDone(selectedDate)&&!saved.length){
+        const p=createPlan(selectedDate),check=planEngine.canConfirmPlan(p,localDate(),{plans:cache.SchedeConfermate,workouts:state.tables.Allenamenti,calendar:state.tables.Calendario,exercises:state.tables.Esercizi,loads:cache.Carichi,segments:cache.CardioSegmenti});
+        if(check.ok)action='<button type="button" class="btn btn-quiet btn-sm" data-cut30-confirm-plan '+(!connected()||!planLoaded||!loadedAt?'disabled':'')+'>Conferma obiettivi</button>';
+      }
+    }catch{}
+    return '<details class="wl-briefing" data-wl-disclosure="briefing" '+(disclosureOpen('briefing')?'open':'')+'><summary>Briefing di giornata <span>Focus e obiettivi</span></summary><p>'+h(flowEngine.dayBriefing(program))+'</p>'+action+'</details>';
+  }
+  function closureActive(){return closureOpen.has(disclosureKey('closure'));}
+  function sessionClosure(form){
+    if(!closureActive()||form.dataset.wlCloseKey!==disclosureKey('closure')||selectedDate>localDate()||setSaving)throw Error('Seduta non valida o salvataggio serie in corso.');
+    const values=flowEngine.validateSessionClosure(Object.fromEntries(new FormData(form)));
+    const day=selectedDate,program=programFor(day),prev=trainingFor(day),stamp=now();
+    upsert('Allenamenti',{...prev,id:prev?.id||'a-'+day.replaceAll('-',''),data:day,programma:program,...values,stato:'completato',updated_at:stamp});
+    upsert('Calendario',{id:'c-'+day.replaceAll('-',''),data:day,programma:program,stato:'completato',note:'Registrato da PWA',updated_at:stamp});
+    closureOpen.delete(disclosureKey('closure'));sessionDrafts.delete(disclosureKey('closure'));liveStarts.delete(liveKey());
+    if(restTimer?.date===day)stopRest();
+    render();toast('Allenamento concluso · esito calcolato dai dati registrati');
+    document.querySelector('.wl-session-end')?.scrollIntoView({behavior:'smooth',block:'start'});
+  }
   function trainingPanel(){
     const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>exerciseDone(x,ex)).length;
-    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.9.0</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
-      '<div class="progress wl-session-progress"><span style="width:'+(ex.length?done/ex.length*100:0)+'%"></span></div><div class="wl-toolbar"><span>Serie verificate · storico privato</span><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      livePanel(ex)+'<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+cardioPrescription(suggest)+'<details class="wl-advanced wl-cardio-details" data-wl-disclosure="cardio" '+(disclosureOpen('cardio')?'open':'')+'><summary>Registra cardio effettivo</summary>'+segmentPanel()+'</details>'+sessionSummary(ex,done)+'<details class="wl-plan" data-wl-disclosure="audit" '+(disclosureOpen('audit')?'open':'')+'><summary>Obiettivi e audit</summary>'+planPanel(suggest)+auditPanel()+'</details></section>';
+    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.10.0</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
+      briefing(program,suggest)+'<div class="progress wl-session-progress"><span style="width:'+(ex.length?done/ex.length*100:0)+'%"></span></div><div class="wl-toolbar"><span>Serie verificate · storico privato</span><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
+      livePanel(ex)+'<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+cardioPrescription(suggest)+'<details class="wl-advanced wl-cardio-details" data-wl-disclosure="cardio" '+(disclosureOpen('cardio')?'open':'')+'><summary>Registra cardio effettivo</summary>'+segmentPanel()+'</details>'+sessionSummary(ex,done,suggest)+'</section>';
   }
-  function sessionSummary(ex,done){
+  function sessionSummary(ex,done,suggest){
     const closed=isDone(selectedDate),ready=ex.length>0&&done===ex.length;
     const metrics=flowEngine.sessionMetrics(trainingFor(selectedDate));
     const registered=ex.reduce((s,x)=>s+logEngine.sessionWorkingCount(setRows(x),engine.readSetEffort),0);
     const value=(v,unit)=>v===null?'—':h(fmtN(v,1))+unit;
     const title=closed?'Allenamento concluso':ready?'Esercizi completati':'Riepilogo della seduta';
     const score=closed?window.cut30LevelForDate?.(selectedDate):null,ev=score?.event,labels={improvement:'Miglioramento',maintenance:'Mantenimento',decline:'Calo ripetuto',baseline:'Costanza / riferimento',unknown:'Non valutabile'};
-    const xp=closed?'<div class="wl-xp-result"><span>'+ (ev?labels[ev.outcome]:'Prestazione non valutabile')+(score?.provisional?' · dati parziali':'')+'</span><b>'+(ev?(ev.applied>0?'+':'')+ev.applied+' XP':'—')+'</b></div>':'';
+    const program=programFor(selectedDate),workout=trainingFor(selectedDate),plan=logPlan();
+    const strength=/^(Upper|Lower) /.test(program),required=ex.filter(x=>x.muscle!=='Cardio'),plannedSets=strength?required.filter(x=>x.id!=='plank').reduce((s,x)=>s+x.sets,0):0;
+    const result=flowEngine.sessionRating({closed,done:required.filter(x=>exerciseDone(x,ex)).length,planned:required.length,registered,plannedSets,cardio:metrics.cardio,cardioTarget:plan?.cardio?.duration_min??suggest?.cardio?.duration_min??0,core:workout?.durata_core_min,coreTarget:plan?.core_minutes??0,loadAvailable:loadReady(),event:ev,provisional:!score||score.provisional,recovery:program==='Recupero'});
+    const xp=closed?'<div class="wl-final-result" aria-live="polite"><div><small>ESITO ALLENAMENTO</small><strong>'+(result?.rating!=null?result.rating+'/5':'—')+'</strong><span>'+h(result?.label||'Non valutabile')+(result?.provisional?' · provvisorio':'')+'</span><div class="wl-rating-dots" aria-hidden="true">'+Array.from({length:5},(_,i)=>'<i class="'+(i<(result?.rating||0)?'filled':'')+'"></i>').join('')+'</div></div><div><small>ESPERIENZA</small><strong>'+(ev?(ev.applied>0?'+':'')+ev.applied:'—')+' XP</strong><span>'+h(ev?labels[ev.outcome]:program==='Recupero'?'Nessun XP previsto':'Dati non sufficienti')+(score?.provisional?' · provvisorio':'')+'</span></div></div><small class="wl-result-note">Voto di aderenza al programma e progresso documentato, non misura fisiologica. XP dal motore esistente; nessun accredito duplicato.</small>':'';
     return '<section class="wl-session-end '+(closed||ready?'wl-ready':'')+'"><h3>'+title+'</h3><p>'+(closed?'Seduta confermata nel diario.':ready?'Registra i dati effettivi della seduta e conferma la conclusione.':'Riepilogo delle registrazioni effettuate.')+'</p>'+
       xp+'<div class="wl-end-grid"><div><small>Esercizi</small><b>'+done+'/'+ex.length+'</b></div><div><small>Serie allenanti verificate</small><b>'+(loadedAt?registered:'—')+'</b></div><div><small>Tempo registrato</small><b>'+value(metrics.minutes,' min')+(metrics.partialMinutes&&metrics.minutes!==null?'*':'')+'</b></div><div><small>Cardio</small><b>'+value(metrics.cardio,' min')+'</b></div><div><small>Calorie attive</small><b>'+value(metrics.kcal,' kcal')+'</b></div></div>'+
       (metrics.partialMinutes&&metrics.minutes!==null?'<p>* Durate parziali.</p>':'')+
-      '<button type="button" class="btn btn-quiet wl-session-data" data-wl-session-data>Apri dati della seduta</button>'+
-      '<button type="button" class="btn wl-finish" data-action="finish-training" '+(selectedDate>localDate()?'disabled':'')+'>'+(closed?'Aggiorna sessione':'Concludi allenamento')+'</button></section>';
+      '<button type="button" class="btn wl-finish" data-wl-close-session '+(selectedDate>localDate()||setSaving?'disabled':'')+'>'+(closed?'Modifica dati della seduta':'Concludi allenamento')+'</button>'+
+      '<div data-wl-closure-slot '+(closureActive()?'':'hidden')+'></div></section>';
   }
   function closeGuide(){const d=document.querySelector('#wl-guide');if(d)d.close();if(guideUrl){URL.revokeObjectURL(guideUrl);guideUrl=null;}d?.remove();}
   function openGuide(ex){
@@ -550,7 +578,17 @@
     if(!document.querySelector('#app') || !engine)return;
     const root=document.querySelector('#app');
     if(currentPage==='progress')root.insertAdjacentHTML('afterbegin',summary()+latestLoads());
-    if(currentPage==='training'){const old=root.querySelector('.training-list')?.closest('.panel');if(old)old.outerHTML=trainingPanel();else root.insertAdjacentHTML('afterbegin',trainingPanel());const sf=root.querySelector('#training-form'),draft=sessionDrafts.get(selectedDate);if(sf&&draft)for(const [k,v] of Object.entries(draft))if(sf.elements[k])sf.elements[k].value=v;const panel=sf?.closest('.panel'),shell=root.querySelector('.wl-shell');if(panel&&shell&&!shell.contains(panel)){const details=document.createElement('details');details.className='wl-advanced wl-session-fields';details.dataset.wlDisclosure='session';details.open=disclosureOpen('session');details.innerHTML='<summary>Dati complessivi della seduta</summary>';shell.append(details);details.append(panel);panel.classList.add('wl-inline-panel');}const cf=root.querySelector('#cut30-cardio-form'),cd=cardioDrafts.get(disclosureKey('cardio'));if(cf&&cd)for(const [k,v] of Object.entries(cd))if(cf.elements[k])cf.elements[k].value=v;}
+    if(currentPage==='training'){
+      const old=root.querySelector('.training-list')?.closest('.panel');if(old)old.outerHTML=trainingPanel();else root.insertAdjacentHTML('afterbegin',trainingPanel());
+      const sf=root.querySelector('#training-form'),draft=sessionDrafts.get(disclosureKey('closure'));if(sf&&draft)for(const [k,v] of Object.entries(draft))if(sf.elements[k])sf.elements[k].value=v;
+      const panel=sf?.closest('.panel'),slot=root.querySelector('[data-wl-closure-slot]');
+      if(panel&&slot){slot.append(panel);panel.classList.add('wl-inline-panel','wl-closure-form');sf.dataset.wlCloseKey=disclosureKey('closure');
+        const subtitle=panel.querySelector('.section-subtitle');if(subtitle)subtitle.textContent='Inserisci solo i dati effettivi. Durata 0 se non svolta; lascia vuoti i dati non rilevati.';
+        const button=sf.querySelector('button[type="submit"]');if(button){button.textContent=isDone(selectedDate)?'Conferma aggiornamento':'Conferma chiusura allenamento';button.className='btn';}
+        sf.insertAdjacentHTML('beforeend','<button type="button" class="btn btn-quiet" data-wl-cancel-close>Annulla</button><p class="wl-save-feedback" data-wl-close-feedback role="status"></p>');
+      }
+      const cf=root.querySelector('#cut30-cardio-form'),cd=cardioDrafts.get(disclosureKey('cardio'));if(cf&&cd)for(const [k,v] of Object.entries(cd))if(cf.elements[k])cf.elements[k].value=v;
+    }
     if(currentPage==='nutrition')root.insertAdjacentHTML('afterbegin',recipePanel());
   }
   function slug(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'esercizio';}
@@ -638,7 +676,7 @@
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.9.0');
+      const mod=await import('./engine/delete-record.mjs?v=3.10.0');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
       assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
       const remaining=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,items),engine.readSetEffort);
@@ -733,7 +771,7 @@
   }
   function onInput(e){
     const cardio=e.target.closest('#cut30-cardio-form');if(cardio){cardioDrafts.set(disclosureKey('cardio'),Object.fromEntries(new FormData(cardio)));return;}
-    const session=e.target.closest('#training-form');if(session){sessionDrafts.set(selectedDate,Object.fromEntries(new FormData(session)));return;}
+    const session=e.target.closest('#training-form');if(session){sessionDrafts.set(disclosureKey('closure'),Object.fromEntries(new FormData(session)));return;}
     const log=e.target.closest('.wl-set-form');if(log){captureLog(log);return;}
     const form=e.target.closest('#cut30-recipe-form');
     if(!form)return;
@@ -758,7 +796,8 @@
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
     const history=e.target.closest('[data-wl-history-day]');if(history){if(setSaving)return;selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){e.preventDefault();if(logExercises().some(x=>x.id===toggle.dataset.wlToggle)){toggleExercise(selectedDate,toggle.dataset.wlToggle);render();}return;}
-    if(e.target.closest('[data-wl-session-data]')){const form=document.querySelector('#training-form'),detail=form?.closest('details');if(detail){detail.open=true;disclosureState.add(disclosureKey('session'));}form?.scrollIntoView({behavior:'smooth',block:'start'});return;}
+    if(e.target.closest('[data-wl-close-session]')){if(selectedDate>localDate()||setSaving)return;closureOpen.add(disclosureKey('closure'));render();document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
+    if(e.target.closest('[data-wl-cancel-close]')){closureOpen.delete(disclosureKey('closure'));sessionDrafts.delete(disclosureKey('closure'));render();return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
     const edit=e.target.closest('[data-wl-edit]');if(edit){const ex=logExercises().find(x=>x.id===edit.dataset.wlId);if(ex)fillLog(ex,cache.Carichi.find(x=>x.id===edit.dataset.wlEdit),true);return;}
@@ -787,7 +826,7 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.9.0');restNode();setInterval(tickRest,250);setInterval(tickLive,1000);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.10.0');restNode();setInterval(tickRest,250);setInterval(tickLive,1000);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
@@ -796,7 +835,7 @@
       document.addEventListener('toggle',e=>{const el=e.target,id=el.dataset?.wlDisclosure;if(id&&el.isConnected){const key=disclosureKey(id);if(el.open)disclosureState.add(key);else disclosureState.delete(key);}},true);
       document.addEventListener('change',onInput);
       document.addEventListener('change',e=>{const id=e.target.dataset?.exercise;if(id&&currentPage==='training'&&e.target.checked){const ex=logExercises().find(x=>x.id===id);if(ex&&(ex.id==='plank'||ex.muscle==='Cardio'))collapseCompleted(selectedDate,id);}},true);
-      document.addEventListener('submit',e=>{if(e.target.id==='training-form'&&selectedDate<=localDate()&&e.target.checkValidity())sessionDrafts.delete(selectedDate);},true);
+      document.addEventListener('submit',e=>{if(e.target.id!=='training-form'||!e.target.dataset.wlCloseKey)return;e.preventDefault();e.stopImmediatePropagation();const f=e.target;if(!f.checkValidity()){f.reportValidity();return;}try{sessionClosure(f);}catch(err){const p=f.querySelector('[data-wl-close-feedback]');if(p){p.textContent=err.message;p.classList.add('wl-save-error');}else toast(err.message);}},true);
       render();
       setTimeout(()=>refreshCloud(true),1000);
       setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&Date.now()-loadedAt>300000)refreshCloud(true);},90000);
