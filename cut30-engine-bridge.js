@@ -550,7 +550,7 @@
     try{
     publishLoads(await readLoadRows(),sheet);
     if(date!==selectedDate)throw Error('Data cambiata durante il salvataggio. Riprova dalla scheda corretta.');
-    const before=logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort),wasDone=exerciseDone(ex);
+    const before=logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort);
     const existing=cache.Carichi.find(x=>x.id===form.dataset.editId);
     if(form.dataset.editId&&!existing)throw Error('La serie da modificare non esiste più. Aggiorna la scheda.');
     if(existing&&(existing.data!==date||logEngine.norm(existing.esercizio)!==logEngine.norm(exercise)||Number(existing.numero_serie)!==number||existing.unita_carico!==unit))throw Error('Per correggere una serie mantieni variante, palestra, attrezzo e numero originali.');
@@ -564,7 +564,7 @@
       publishLoads(parseTable(saved.allRows),sheet);
       const after=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,WORKOUTS[program]||[]),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
-      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq===logEngine.UNKNOWN_EQUIPMENT?'':eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});if(!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate)collapseCompleted(date,ex.id);
+      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq===logEngine.UNKNOWN_EQUIPMENT?'':eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});if(after>=ex.sets&&before<ex.sets&&date===selectedDate)collapseCompleted(date,ex.id);
       try{if(restEngine&&date===selectedDate&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||(date===selectedDate&&logItems().some(x=>x.id!==ex.id&&!x.done)),exercise:ex}))beginRest(ex,rec);
       else if(!existing&&date===localDate())stopRest();}catch(err){console.warn('Timer non disponibile:',err);}
       setSaving=false;toast('Serie salvata e verificata sul Google Sheet privato');render();
