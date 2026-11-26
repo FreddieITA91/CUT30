@@ -5,9 +5,9 @@ import {runInNewContext} from 'node:vm';
 import * as rest from '../engine/rest-timer.mjs';
 const source=readFileSync(new URL('../cut30-engine-bridge.js',import.meta.url),'utf8');
 test('bridge countdown alerts once, extends, and stops without touching session data',()=>{
- let clock=1000,tones=0,vibrations=0;const notices=[],children=new Map(),gains=[];
+ let clock=1000,tones=0,vibrations=0;const notices=[],children=new Map(),gains=[],sustained=[],waves=[],frequencies=[];
  const node={hidden:true,classList:{toggle(){}},querySelector(k){if(!children.has(k))children.set(k,{textContent:'',style:{}});return children.get(k);}};
- const fakeAudio={state:'running',currentTime:0,destination:{},createOscillator(){return {frequency:{},connect(){},start(){tones++;},stop(){}}},createGain(){return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(v){gains.push(v)}},connect(){}}}};
+ const fakeAudio={state:'running',currentTime:0,destination:{},createOscillator(){return {frequency:{},connect(){},start(){tones++;waves.push(this.type);frequencies.push(this.frequency.value);},stop(){}}},createGain(){return {gain:{setValueAtTime(v,t){sustained.push([v,t]);},exponentialRampToValueAtTime(v){gains.push(v)}},connect(){}}}};
  const globals={rest,fakeAudio,Date:{now:()=>clock},document:{readyState:'loading',visibilityState:'visible',addEventListener(){},querySelector:()=>node,body:{classList:{toggle(){}}}},navigator:{vibrate(){vibrations++;}},toast:s=>notices.push(s),window:{},console};
  const injected=source.replace(/\}\)\(\);\s*$/,'restEngine=rest;restAudio=fakeAudio;window.actions={beginRest,tickRest,stopRest,onClick};})();');
  runInNewContext(injected,globals);
@@ -15,12 +15,13 @@ test('bridge countdown alerts once, extends, and stops without touching session 
  a.beginRest({name:'Panca',rest:'120 sec'},{id:'s1',data:'2026-11-26'});
  assert.equal(children.get('[data-rest-time]').textContent,'2:00');assert.equal(node.hidden,false);
  clock=121000;a.tickRest();a.tickRest();assert.equal(tones,3);assert.equal(vibrations,1);assert.equal(notices.length,1);
- assert.equal(children.get('[data-rest-title]').textContent,'Recupero terminato');assert.ok(gains.includes(.72));
- clock+=1100;a.tickRest();assert.equal(node.hidden,true);a.tickRest();assert.equal(tones,3);
+ assert.equal(children.get('[data-rest-title]').textContent,'Recupero terminato');assert.ok(gains.includes(.85));assert.deepEqual(waves,['square','square','square']);assert.deepEqual(frequencies,[1550,2050,1550]);assert.equal(sustained.filter(([v])=>v===.85).length,3);assert.ok(sustained.some(([v,t])=>v===.85&&t===.40));assert.ok(gains.every(v=>v<=1));
+ clock+=1100;a.tickRest();assert.equal(node.hidden,false);
+ clock+=600;a.tickRest();assert.equal(node.hidden,true);a.tickRest();assert.equal(tones,3);
  a.beginRest({name:'Panca',rest:'120 sec'},{id:'s2',data:'2026-11-26'});
  a.onClick({target:{closest:s=>s==='[data-rest-close]'?{}:null}});assert.equal(node.hidden,true);
  clock+=120000;a.tickRest();assert.equal(tones,6);assert.equal(node.hidden,true);
- clock+=1100;a.tickRest();assert.equal(node.hidden,true);
+ clock+=1700;a.tickRest();assert.equal(node.hidden,true);
  a.beginRest({name:'Panca',rest:'120 sec'},{id:'s3',data:'2026-11-26'});
  a.onClick({target:{closest:s=>s==='[data-rest-add]'?{}:null}});assert.equal(children.get('[data-rest-time]').textContent,'2:30');
  clock+=150000;a.tickRest();assert.equal(tones,9);a.stopRest();assert.equal(node.hidden,true);

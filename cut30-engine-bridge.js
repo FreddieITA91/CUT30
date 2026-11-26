@@ -315,11 +315,17 @@
     if(!restAudio||restAudio.state!=='running'){restSound='blocked';return false;}
     try{
       const t=restAudio.currentTime;
-      for(let i=0;i<3;i++){
-        const o=restAudio.createOscillator(),g=restAudio.createGain(),start=t+i*.34;
-        o.type='sine';o.frequency.value=i===2?1046.5:784;
-        g.gain.setValueAtTime(.001,start);g.gain.exponentialRampToValueAtTime(.72,start+.025);g.gain.exponentialRampToValueAtTime(.001,start+.27);
-        o.connect(g);g.connect(restAudio.destination);o.start(start);o.stop(start+.29);
+      // A sustained, band-limited square tone is more audible on small speakers
+      // than a sine with a long exponential fade. Peak gain stays below full scale.
+      const frequencies=[1550,2050,1550];
+      for(let i=0;i<frequencies.length;i++){
+        const o=restAudio.createOscillator(),g=restAudio.createGain(),start=t+i*.55;
+        o.type='square';o.frequency.value=frequencies[i];
+        g.gain.setValueAtTime(.001,start);
+        g.gain.exponentialRampToValueAtTime(.85,start+.012);
+        g.gain.setValueAtTime(.85,start+.40);
+        g.gain.exponentialRampToValueAtTime(.001,start+.43);
+        o.connect(g);g.connect(restAudio.destination);o.start(start);o.stop(start+.45);
       }
       return true;
     }catch{restSound='blocked';return false;}
@@ -357,8 +363,8 @@
     if(restAlerted&&restCloseAt&&Date.now()>=restCloseAt){stopRest();return;}
     if(!restAlerted&&restEngine.remainingSeconds(restTimer,Date.now())===0){
       restAlerted=true;releaseRestWake();
-      const played=playRestSound();restCloseAt=Date.now()+(played?1100:250);
-      try{navigator.vibrate?.([200,100,200]);}catch{}
+      const played=playRestSound();restCloseAt=Date.now()+(played?1700:250);
+      try{navigator.vibrate?.([350,150,350,150,350]);}catch{}
       toast(played?'Recupero terminato':'Recupero terminato · audio non disponibile');
     }
     paintRest();
@@ -430,7 +436,7 @@
   }
   function trainingPanel(){
     const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>exerciseDone(x,ex)).length;
-    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.7.6</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
+    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.7.7</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
       '<div class="progress wl-session-progress"><span style="width:'+(ex.length?done/ex.length*100:0)+'%"></span></div><div class="wl-toolbar"><span>Serie verificate · storico privato</span><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
       '<details class="wl-plan"><summary>Obiettivi, conferma scheda e audit</summary>'+planPanel(suggest)+auditPanel()+'</details>'+
       '<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+sessionSummary(ex,done)+'</section>';
@@ -584,7 +590,7 @@
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.7.6');
+      const mod=await import('./engine/delete-record.mjs?v=3.7.7');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
       assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
       const remaining=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,items),engine.readSetEffort);
@@ -727,7 +733,7 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.6');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.7');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
