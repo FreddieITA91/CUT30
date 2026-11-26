@@ -134,3 +134,52 @@ export function exerciseTrend(ex,rows,through,program,items){
  }
  return {points,conflicts};
 }
+
+/* CUT30 3.9: advice is read-only, scoped to confirmed working sets and identified equipment. */
+const validWork=r=>readSetEffort(r.origine).tipo_serie==='allenante'&&r.carico_kg!==''&&r.carico_kg!=null&&Number.isFinite(Number(r.carico_kg))&&Number(r.carico_kg)>0&&Number.isInteger(Number(r.ripetizioni))&&Number(r.ripetizioni)>0;
+function identityOf(r){
+ const u=unitParts(r?.unita_carico);
+ return u&&['kg macchina','kg per mano','kg totale'].includes(norm(u.type))&&!/^(non identificato|non specificato|corpo libero)$/i.test(u.equipment.trim())?JSON.stringify([norm(r.esercizio),norm(u.type),u.gym,norm(u.equipment)]):null;
+}
+function cleanWork(rows){
+ const slots=new Map();
+ for(const r of rows){const k=JSON.stringify([r.data,r.programma,Number(r.numero_serie)]);if(!slots.has(k))slots.set(k,[]);slots.get(k).push(r);}
+ return [...slots.values()].filter(g=>g.length===1&&validWork(g[0])).map(g=>g[0]).sort((a,b)=>String(a.data).localeCompare(String(b.data))||Number(a.numero_serie)-Number(b.numero_serie));
+}
+const round1=v=>Math.round(v*10)/10;
+export function repTarget(ex){
+ const m=String(ex.dose||'').match(/×\s*(\d+)(?:\s*[–-]\s*(\d+))?/);
+ return m&&!/\bsec\b|\bmin\b/i.test(ex.dose)?[Number(m[1]),Number(m[2]||m[1])]:null;
+}
+export function workoutInsights(ex,current,history,through){
+ const today=cleanWork(current.filter(r=>r.data===through)),past=cleanWork(history.filter(r=>r.data<through));
+ const ref=today.at(-1)||past.at(-1),id=identityOf(ref),target=repTarget(ex);
+ const comparable=id?past.filter(r=>identityOf(r)===id):[],now=id?today.filter(r=>identityOf(r)===id):[];
+ const last=now.at(-1)||comparable.at(-1),effort=last?readSetEffort(last.origine):null;
+ const hard=r=>{const e=readSetEffort(r.origine);return e.rir!=null&&e.rir!==''&&Number(e.rir)<=1||e.rpe!=null&&e.rpe!==''&&Number(e.rpe)>=9;};
+ const easy=r=>{const e=readSetEffort(r.origine);return e.rir!=null&&e.rir!==''&&Number(e.rir)>=2||e.rpe!=null&&e.rpe!==''&&Number(e.rpe)<=8;};
+ const previousDay=comparable.at(-1)?.data,previous=comparable.filter(r=>r.data===previousDay);
+ const declines=now.filter((r,i)=>previous[i]&&Number(r.carico_kg)===Number(previous[i].carico_kg)&&Number(r.ripetizioni)<=Number(previous[i].ripetizioni)-2).length;
+ const fatigue=now.filter(hard).length>=2||declines>=2?'elevata':now.some(hard)||declines?'attenzione':now.some(easy)?'gestibile':'non valutabile';
+ let advice=null;
+ if(last&&target&&id){
+   const [lo,hi]=target,kg=Number(last.carico_kg),reps=Number(last.ripetizioni);
+   const reduce=fatigue==='elevata'||hard(last)&&reps<lo;
+   const progress=!now.length&&previous.length>=ex.sets&&previous.every(r=>Number(r.ripetizioni)>=hi&&easy(r));
+   advice={kg:reduce?Math.max(0,round1(kg*.95)):kg,reps:reduce?lo:Math.max(lo,Math.min(hi,reps)),action:reduce?'reduce':progress?'progress':'hold',reason:reduce?'Fatica elevata o sotto obiettivo: riferimento −5%, scegli il carico disponibile inferiore e recupera di più.':progress?'Ultima seduta completata al limite alto con margine: valuta il minimo incremento disponibile, senza forzare.':'Mantieni il carico di riferimento e lavora nel range previsto.',source:last};
+ }
+ const e1=r=>Number(r.ripetizioni)<=10?round1(Number(r.carico_kg)*(1+Number(r.ripetizioni)/30)):null;
+ const records=rs=>rs.length?{kg:Math.max(...rs.map(r=>Number(r.carico_kg))),reps:Math.max(...rs.map(r=>Number(r.ripetizioni))),e1rm:Math.max(0,...rs.map(r=>e1(r)||0))||null,volume:Math.max(...[...new Set(rs.map(r=>r.data))].map(d=>round1(rs.filter(r=>r.data===d).reduce((s,r)=>s+Number(r.carico_kg)*Number(r.ripetizioni),0))))}:null;
+ const historical=records(comparable),currentRecord=records(now),best=records([...comparable,...now]);
+ const improved=historical&&currentRecord?Object.keys(currentRecord).filter(k=>currentRecord[k]!=null&&historical[k]!=null&&currentRecord[k]>historical[k]):[];
+ return {advice,fatigue,declines,records:best,improved,comparable:!!id,reference:ref||null};
+}
+export function categoricalBars(points,left=42,right=325){
+ const step=Math.min(40,(right-left)/Math.max(1,points.length)),width=step*.86,start=(left+right-step*points.length)/2;
+ return points.map((p,i)=>({...p,x:start+step*(i+.5),width}));
+}
+export function workoutLiveSummary(items,done,elapsedSeconds){
+ const pending=items.filter((x,i)=>!done[i]),remaining=pending.reduce((s,x)=>s+Math.max(0,Number(x.remaining)||0),0);
+ const seconds=pending.reduce((s,x)=>s+Math.max(0,Number(x.remaining)||0)*(40+(Number(x.restSeconds)||60)),0);
+ return {remaining,next:pending[0]?.id||null,elapsedSeconds:Math.max(0,Math.floor(elapsedSeconds||0)),estimatedMinutes:Math.ceil(seconds/60)};
+}

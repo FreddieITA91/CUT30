@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {workoutInsights,categoricalBars,workoutLiveSummary} from '../engine/workout-log.mjs';
+import {encodeSetEffort} from '../engine/cut30.mjs';
+const ex={id:'x',sets:2,dose:'2 × 6–10'};
+const day='2026-11-26',old='2026-11-01';
+const row=(data,numero_serie,carico_kg,ripetizioni,rir=2,unit='kg totale | palestra A | attrezzo Bilanciere')=>({id:data+'-'+numero_serie,data,numero_serie,carico_kg,ripetizioni,programma:'Upper A',esercizio:'Panca',unita_carico:unit,origine:encodeSetEffort('test',{tipo_serie:'allenante',rir})});
+test('bars are adjacent by category, not elapsed days',()=>{const b=categoricalBars([{date:old},{date:'2026-11-02'},{date:day}]);assert.equal(b[1].x-b[0].x,b[2].x-b[1].x);assert.ok(b[1].x-b[0].x-b[0].width<8);assert.equal(b.length,3);});
+test('progression requires complete identified prior session and explicit effort',()=>{let p=workoutInsights(ex,[],[row(old,1,20,10),row(old,2,20,10)],day);assert.equal(p.advice.action,'progress');assert.equal(p.advice.kg,20);p=workoutInsights(ex,[],[row(old,1,20,10)],day);assert.equal(p.advice.action,'hold');});
+test('unknown equipment and warmup never grant comparable records',()=>{const r=row(day,1,20,10,2,'kg totale | palestra A | attrezzo non identificato');assert.equal(workoutInsights(ex,[r],[],day).records,null);const w={...row(day,1,100,10),origine:encodeSetEffort('test',{tipo_serie:'riscaldamento'})};assert.equal(workoutInsights(ex,[w],[],day).advice,null);});
+test('two hard sets trigger fatigue and lower target, PR isolated by equipment',()=>{const prev=[row(old,1,20,10),row(old,2,20,10),row('2026-11-02',1,100,10,2,'kg totale | palestra B | attrezzo Bilanciere')];const p=workoutInsights(ex,[row(day,1,24,8,0),row(day,2,24,7,1)],prev,day);assert.equal(p.fatigue,'elevata');assert.equal(p.advice.kg,22.8);assert.equal(p.records.kg,24);assert.ok(p.improved.includes('kg'));});
+test('live counts only remaining sets of incomplete exercises',()=>{const a=workoutLiveSummary([{id:'a',remaining:3,restSeconds:90},{id:'b',remaining:2,restSeconds:60}],[true,false],70);assert.equal(a.remaining,2);assert.equal(a.next,'b');assert.equal(a.elapsedSeconds,70);assert.equal(a.estimatedMinutes,4);});
