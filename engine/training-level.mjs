@@ -2,7 +2,9 @@
 import {byIdLatest,canonicalWorkouts,readSetEffort} from './cut30.mjs';
 import {unitParts,norm} from './workout-log.mjs';
 import {validateCardioSegment} from './cardio-segments.mjs';
-export const LEVEL_VERSION='1.0';
+export const LEVEL_VERSION='1.1';
+export const BASELINE_PROFILES=Object.freeze({restart:{level:5,label:'Ripresa / principiante'},regular:{level:20,label:'Allenamento regolare'},experienced:{level:35,label:'Allenamento strutturato'},advanced:{level:50,label:'Esperienza avanzata'}});
+export const xpForLevel=level=>{const n=Math.min(100,Math.max(1,Math.floor(Number(level)||1)))-1;return 100*n+5*n*(n-1);};
 export const XP={improvement:35,maintenance:10,decline:-15,baseline:5,unknown:0};
 const dayOK=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d+'T12:00:00Z'))&&new Date(d+'T12:00:00Z').toISOString().slice(0,10)===d;
 const n=v=>v==null||String(v).trim()===''||!Number.isFinite(Number(v))?null:Number(v);
@@ -65,12 +67,20 @@ function compare(current,history,match,change){
   return {exercise,trend,comparisons:rows.length,change:Math.round(median(rows.map(r=>r.delta))*1000)/10};
  });
 }
-export function buildTrainingLevel({workouts=[],loads=[],segments=[],start,today,loadAvailable=false,cardioAvailable=false}={}){
+export function readCalibration(value,today){
+ if(!value)return null;
+ try{const v=typeof value==='string'?JSON.parse(value):value;
+ if(v.version!==1||!Object.hasOwn(BASELINE_PROFILES,v.profile)||!dayOK(v.date)||v.date>today)return null;
+ return {version:1,profile:v.profile,date:v.date,level:BASELINE_PROFILES[v.profile].level,label:BASELINE_PROFILES[v.profile].label};
+ }catch{return null;}
+}
+export function buildTrainingLevel({workouts=[],loads=[],segments=[],start,today,loadAvailable=false,cardioAvailable=false,calibration=null}={}){
  if(!dayOK(today)||!dayOK(start))throw Error('Periodo livello non valido');
  const sessions=canonicalWorkouts(workouts.filter(x=>x.stato!=='eliminato')).filter(x=>x.stato==='completato'&&x.data<=today&&x.programma!=='Recupero');
  const completed=new Map(sessions.map(w=>[w.data,w.programma]));
  const strength=loadAvailable?strengthRows(loads).filter(x=>completed.get(x.date)===x.program):[];
  const cardio=cardioAvailable?cardioRows(segments).filter(x=>completed.get(x.date)===x.program):[];
+ const baseline=readCalibration(calibration,today),initialXP=baseline?xpForLevel(baseline.level):0;
  let total=0;const events=[],counts={improvement:0,maintenance:0,decline:0,baseline:0,unknown:0};
  for(const w of sessions.filter(x=>x.data>=start)){
   const s=compare(strength.filter(x=>x.date===w.data),strength,effortMatch,strengthDelta);
@@ -79,8 +89,11 @@ export function buildTrainingLevel({workouts=[],loads=[],segments=[],start,today
   const positive=[w.durata_pesi_min,w.durata_cardio_min,w.durata_core_min].some(v=>n(v)>0);
   // Mixed or isolated declines remain unclassified; only repeated, consistent falls cost XP.
   const outcome=up>evidence.length/2&&down===0?'improvement':down>evidence.length/2&&up===0?'decline':flat>evidence.length/2&&up===0&&down===0?'maintenance':positive&&!evidence.length?'baseline':'unknown';
-  const points=XP[outcome],before=total;total=Math.max(0,total+points);counts[outcome]++;
-  events.push({date:w.data,program:w.programma,outcome,points,applied:total-before,total,level:levelFromXP(total).level,evidence});
+  const points=XP[outcome],before=total;total=Math.max(baseline&&w.data>=baseline.date?-initialXP:0,total+points);counts[outcome]++;
+  events.push({date:w.data,program:w.programma,outcome,points,applied:total-before,total,level:baseline?levelFromXP(initialXP+total).level:null,evidence});
  }
- return {version:LEVEL_VERSION,total,...levelFromXP(total),events,counts,provisional:!loadAvailable||!cardioAvailable,loadAvailable,cardioAvailable};
+ const recent=sessions.filter(w=>age(today,w.data)<28);
+ const recentStrength=strength.filter(x=>age(today,x.date)<28),recentCardio=cardio.filter(x=>age(today,x.date)<28);
+ const profile={sessions28:recent.length,weeks28:new Set(recent.map(w=>Math.floor(age(today,w.data)/7))).size,strengthExercises:new Set(recentStrength.map(x=>x.exercise)).size,cardioSessions:new Set(recentCardio.map(x=>x.date)).size};
+ return {version:LEVEL_VERSION,total,...levelFromXP(initialXP+total),baseline,initialXP,calibrated:!!baseline,events,counts,profile,provisional:!loadAvailable||!cardioAvailable,loadAvailable,cardioAvailable};
 }
