@@ -39,7 +39,7 @@
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
-      try{await loadPlans();}catch(err){planLoaded=false;cache.SchedeConfermate=[];console.warn('Plan archive unavailable');}
+      try{await loadPlans();}catch(err){planLoaded=false;cache.SchedeConfermate=[];window.cut30SetConfirmedPlans?.([]);console.warn('Plan archive unavailable');}
       try{
         const meta=await googleApi('?fields=sheets.properties.title');
         cache.CicloAuto=meta.sheets?.some(x=>x.properties.title==='CicloAuto')?parseTable((await googleApi('/values/'+encodeURIComponent("'CicloAuto'!A:I")+'?valueRenderOption=UNFORMATTED_VALUE')).values||[]):[];
@@ -166,11 +166,11 @@
   async function loadPlans(){
     const meta=await googleApi('?fields=sheets.properties.title');
     const exists=meta.sheets?.some(s=>s.properties.title==='SchedeConfermate');
-    if(!exists){cache.SchedeConfermate=[];planLoaded=true;return false;}
+    if(!exists){cache.SchedeConfermate=[];window.cut30SetConfirmedPlans?.([]);planLoaded=true;return false;}
     const r=await googleApi('/values/'+encodeURIComponent("'SchedeConfermate'!A:F")+'?valueRenderOption=UNFORMATTED_VALUE');
     const values=r.values||[];
     if(values.length&&planEngine.PLAN_HEADERS.some((k,i)=>values[0][i]!==k))throw Error('Schema SchedeConfermate inatteso');
-    cache.SchedeConfermate=parseTable(values);planLoaded=true;return true;
+    cache.SchedeConfermate=parseTable(values);window.cut30SetConfirmedPlans?.(cache.SchedeConfermate);planLoaded=true;return true;
   }
   function currentDraft(day){
     const program=programFor(day);

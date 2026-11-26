@@ -6,6 +6,8 @@ on:
       - 'engine/**'
       - 'tests/**'
       - 'app.js'
+      - 'experience.js'
+      - 'experience.css'
       - 'cut30-engine-bridge.js'
       - 'sw.js'
       - 'index.html'
@@ -15,6 +17,8 @@ on:
       - 'engine/**'
       - 'tests/**'
       - 'app.js'
+      - 'experience.js'
+      - 'experience.css'
       - 'cut30-engine-bridge.js'
       - 'sw.js'
       - 'index.html'
@@ -58,6 +62,8 @@ jobs:
           node --check engine/recipes.mjs
           node --check engine/sync-delta.mjs
           node --check engine/publish-report.mjs
+          node --check engine/period-tracker.mjs
+          node --check experience.js
           node --check app.js
           node --check cut30-engine-bridge.js
           node --check sw.js
