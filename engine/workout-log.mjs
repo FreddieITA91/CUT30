@@ -166,7 +166,7 @@ export function workoutInsights(ex,current,history,through){
    const [lo,hi]=target,kg=Number(last.carico_kg),reps=Number(last.ripetizioni);
    const reduce=fatigue==='elevata'||hard(last)&&reps<lo;
    const progress=!now.length&&previous.length>=ex.sets&&previous.every(r=>Number(r.ripetizioni)>=hi&&easy(r));
-   advice={kg,reps:Math.max(lo,Math.min(hi,reps)),action:reduce?'reduce':progress?'progress':'hold',reason:reduce?'Fatica elevata o sotto obiettivo: valuta un carico inferiore e più recupero.':progress?'Ultima seduta completata al limite alto con margine: valuta il minimo incremento disponibile.':'Mantieni il carico di riferimento e lavora nel range previsto.',source:last};
+   advice={kg:reduce?Math.max(0,round1(kg*.95)):kg,reps:reduce?lo:Math.max(lo,Math.min(hi,reps)),action:reduce?'reduce':progress?'progress':'hold',reason:reduce?'Fatica elevata o sotto obiettivo: riferimento −5%, scegli il carico disponibile inferiore e recupera di più.':progress?'Ultima seduta completata al limite alto con margine: valuta il minimo incremento disponibile, senza forzare.':'Mantieni il carico di riferimento e lavora nel range previsto.',source:last};
  }
  const e1=r=>Number(r.ripetizioni)<=10?round1(Number(r.carico_kg)*(1+Number(r.ripetizioni)/30)):null;
  const records=rs=>rs.length?{kg:Math.max(...rs.map(r=>Number(r.carico_kg))),reps:Math.max(...rs.map(r=>Number(r.ripetizioni))),e1rm:Math.max(0,...rs.map(r=>e1(r)||0))||null,volume:Math.max(...[...new Set(rs.map(r=>r.data))].map(d=>round1(rs.filter(r=>r.data===d).reduce((s,r)=>s+Number(r.carico_kg)*Number(r.ripetizioni),0))))}:null;
@@ -175,8 +175,8 @@ export function workoutInsights(ex,current,history,through){
  return {advice,fatigue,declines,records:best,improved,comparable:!!id,reference:ref||null};
 }
 export function categoricalBars(points,left=42,right=325){
- const step=(right-left)/Math.max(1,points.length),width=Math.min(32,step*.78);
- return points.map((p,i)=>({...p,x:left+step*(i+.5),width}));
+ const step=Math.min(40,(right-left)/Math.max(1,points.length)),width=step*.86,start=(left+right-step*points.length)/2;
+ return points.map((p,i)=>({...p,x:start+step*(i+.5),width}));
 }
 export function workoutLiveSummary(items,done,elapsedSeconds){
  const pending=items.filter((x,i)=>!done[i]),remaining=pending.reduce((s,x)=>s+Math.max(0,Number(x.remaining)||0),0);
