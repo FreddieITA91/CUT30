@@ -22,6 +22,7 @@
   async function refreshCloud(silent=false){
     if(busy||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
     busy=true;
+    const sourceSheet=state.prefs.sheetId;
     try{
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
       const end={Carichi:'J',Valutazioni:'L',AnalisiAuto:'P'};
@@ -35,7 +36,10 @@
         result=await googleApi('/values:batchGet?'+fallback.toString());
         cache.AnalisiAuto=[];
       }
-      cache.Carichi=parseTable(result.valueRanges?.[0]?.values||[]);
+      const loadValues=result.valueRanges?.[0]?.values;
+      if(!Array.isArray(loadValues)||!loadValues.length||headers.Carichi.some((k,i)=>loadValues[0][i]!==k))throw Error('Schema Carichi inatteso: storico non verificato');
+      if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
+      cache.Carichi=parseTable(loadValues);
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
@@ -44,7 +48,9 @@
         const meta=await googleApi('?fields=sheets.properties.title');
         cache.CicloAuto=meta.sheets?.some(x=>x.properties.title==='CicloAuto')?parseTable((await googleApi('/values/'+encodeURIComponent("'CicloAuto'!A:I")+'?valueRenderOption=UNFORMATTED_VALUE')).values||[]):[];
       }catch{cache.CicloAuto=[];}
+      if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
       loadedAt=Date.now();
+      window.cut30SetLoadEvidence?.(cache.Carichi,loadedAt,sourceSheet);
       if(engine)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
     }catch(err){console.error('CUT30 Engine refresh:',err);if(!silent)toast('Aggiornamento motore non riuscito: '+err.message);}
@@ -435,6 +441,7 @@
     try{
       await saveRow('Carichi',rec,existing||null);
       cache.Carichi=cache.Carichi.filter(x=>x.id!==rec.id).concat(rec);
+      window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),state.prefs.sheetId);
       const after=logEngine.workingCount(ex,logEngine.matching(ex,cache.Carichi.filter(x=>x.data===date)),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
       const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});logOpen.add(key);
@@ -527,6 +534,7 @@
     try{
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       logEngine=await import('./engine/workout-log.mjs');
+      window.cut30RefreshLoadEvidence=()=>refreshCloud(true);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);

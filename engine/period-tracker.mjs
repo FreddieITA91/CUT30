@@ -1,6 +1,7 @@
 import {suggestTrainingDraft,byIdLatest} from './cut30.mjs';
 import {readPlanRecord} from './training-plan.mjs';
 import {WORKOUTS} from './workout-catalog.mjs';
+import {buildMuscleCoverage} from './muscle-coverage.mjs';
 const num=v=>v==null||String(v).trim()===''?null:Number.isFinite(Number(v))&&Number(v)>=0?Number(v):null;
 const round=v=>Math.round(v*10)/10;
 const sum=a=>a.reduce((s,x)=>s+x,0);
@@ -18,7 +19,7 @@ const ratio=(a,b)=>a===null||b===null||b<=0?null:Math.min(100,Math.max(0,100*a/b
 const metric=(a,t,full=t)=>({actual:a,expected:t,full,score:ratio(a,t)});
 const measured=(rows,key)=>{const values=rows.map(r=>num(r[key])).filter(x=>x!==null);return values.length?sum(values):null;};
 const keys=['kcal','proteine','carboidrati','grassi','fibre'];
-export function buildPeriodTracker({today,period='week',tables={},confirmedPlans=[],programFor,targetsFor,stepsGoal=12000,weeklyCardioGoal=300}){
+export function buildPeriodTracker({today,period='week',tables={},confirmedPlans=[],loadEvidence=null,programFor,targetsFor,stepsGoal=12000,weeklyCardioGoal=300}){
  const dates=periodDates(today,period),elapsed=dates.filter(d=>d<=today);
  const workouts=byIdLatest(tables.Allenamenti||[]).filter(x=>!['annullato','eliminato'].includes(x.stato)&&dateOK(x.data)&&x.data<=today);
  const byDay=new Map();
@@ -56,7 +57,7 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
   const steps=stepValues.length?Math.max(...stepValues):null;
   const checked=new Set(checks.filter(x=>x.data===date&&x.programma===p.program&&String(x.completato).toLowerCase()==='true').map(x=>x.esercizio));
   const nutritionRows=active?meals.filter(x=>x.data===date):[];
-  return {...p,active,hasWorkout:!!w,actual,steps,cardioGoal:cardioQuota(date),checked:p.exercises.filter(e=>checked.has(e.id)).length,checkedIds:[...checked],
+  return {...p,active,hasWorkout:!!w,actualProgram:w?.programma||null,actual,steps,cardioGoal:cardioQuota(date),checked:p.exercises.filter(e=>checked.has(e.id)).length,checkedIds:[...checked],
     checklistKnown:checks.some(x=>x.data===date&&x.programma===p.program),
     nutritionActual:Object.fromEntries(keys.map(k=>[k,measured(nutritionRows,k)])),nutritionLogged:nutritionRows.length>0};
  });
@@ -80,12 +81,12 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
  if(past.some(x=>x.actual.done&&x.exercises.length&&!x.checklistKnown))metrics.exercises.score=null;
  const incompleteWorkouts=past.some(x=>x.hasWorkout&&(x.actual.minutes===null||x.actual.cardio===null));
  if(incompleteWorkouts){metrics.minutes.score=null;metrics.cardio.score=null;}
- const muscles=Object.fromEntries(['Petto','Schiena','Spalle','Braccia','Quadricipiti','Posteriori','Polpacci','Core'].map(g=>[g,{done:0,planned:0}]));
- for(const d of daily)for(const ex of d.exercises){if(!muscles[ex.muscle])continue;muscles[ex.muscle].planned+=ex.sets;if(d.active&&d.checkedIds.includes(ex.id))muscles[ex.muscle].done+=ex.sets;}
+ const muscleEvidence=buildMuscleCoverage(daily,loadEvidence?.rows??tables.Carichi??[],{available:loadEvidence?.available??Array.isArray(tables.Carichi)});
+ const muscles=muscleEvidence.groups;
  const scores=Object.values(metrics).map(m=>m.score).filter(x=>x!==null);
  const nutrition=Object.fromEntries(keys.map(k=>[k,{actual:measured(past.map(x=>x.nutritionActual),k),
     expected:complete(past,x=>num(x.nutrition[k])),full:complete(daily,x=>num(x.nutrition[k]))}]));
- return {period,today,muscles,start:dates[0],end:dates.at(-1),daily,elapsedDays:past.length,metrics,index:scores.length?Math.round(sum(scores)/scores.length):null,coverage:scores.length,
+ return {period,today,muscles,muscleEvidence,start:dates[0],end:dates.at(-1),daily,elapsedDays:past.length,metrics,index:scores.length?Math.round(sum(scores)/scores.length):null,coverage:scores.length,
    cardioPlanned:total(daily,x=>x.cardio),cardioPlannedToDate:cardioExpected,cardioGap:cardioGoal===null?null:round(cardioGoal-total(daily,x=>x.cardio)),
    calories:{actual:calorieActual,forecast:complete(daily,x=>x.calorieForecast),forecastToDate:complete(past,x=>x.calorieForecast),recordedSessions:knownKcal.length,partial:past.some(x=>x.hasWorkout&&x.actual.kcal===null)},
    nutrition,nutritionDays:past.filter(x=>x.nutritionLogged).length,stepDays:knownSteps.length};
