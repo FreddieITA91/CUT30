@@ -9,7 +9,7 @@
   const lastDays=(count=7)=>Array.from({length:count},(_,i)=>shiftDate(localDate(),i-count+1));
   const mSteps=()=>{const map=new Map();for(const x of state.tables.Misure||[])if(n(x.passi_giornalieri)>0)map.set(x.data,Math.max(n(x.passi_giornalieri),n(map.get(x.data))));return map};
   let trackerEngine=null,selectedPeriod="week",confirmedPlans=[],loadEvidence={rows:[],available:false,sheetId:null,at:0,status:'idle',error:''},loadFlight=null;
-  const loadModule=import('./engine/load-evidence.mjs');
+  let loadModule=null;
   window.cut30SetConfirmedPlans=rows=>{confirmedPlans=Array.isArray(rows)?rows:[];};
   window.cut30SetLoadEvidence=(rows,at,sheetId)=>{
     if(sheetId!==state.prefs?.sheetId||!Array.isArray(rows))return;
@@ -32,8 +32,9 @@
     redrawCoverage();
     const promise=(async()=>{
       try{
-        const mod=await loadModule;
-        const rows=await mod.readLoads(googleApi);
+        const mod=await (loadModule??=import('./engine/load-evidence.mjs'));
+        let timeout;let rows;
+        try{rows=await Promise.race([mod.readLoads(googleApi),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Tempo di lettura Carichi scaduto: riprova')),15000);})]);}finally{clearTimeout(timeout);}
         if(sheetId!==state.prefs?.sheetId)return null;
         // A save verified while the read was in flight is newer evidence.
         if(loadEvidence.sheetId===sheetId&&loadEvidence.at>started)return loadEvidence.rows;
@@ -42,6 +43,7 @@
       }catch(err){
         if(sheetId===state.prefs?.sheetId&&loadEvidence.at<=started){
           loadEvidence={...previous,sheetId,status:!token?'disconnected':'error',error:String(err?.message||err).slice(0,180)};
+          loadModule=null;
           if(interactive)toast('Carichi: '+loadEvidence.error);
         }
         return null;

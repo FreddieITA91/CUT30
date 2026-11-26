@@ -22,7 +22,7 @@
   async function refreshCloud(silent=false){
     if(busy||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
     busy=true;
-    const sourceSheet=state.prefs.sheetId;
+    const sourceSheet=state.prefs.sheetId,readStarted=Date.now();
     try{
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
       const end={Carichi:'J',Valutazioni:'L',AnalisiAuto:'P'};
@@ -40,7 +40,7 @@
       if(!Array.isArray(loadValues)||!loadValues.length||headers.Carichi.some((k,i)=>loadValues[0][i]!==k))throw Error('Schema Carichi inatteso: storico non verificato');
       if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
       cache.Carichi=parseTable(loadValues);
-      window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),sourceSheet);
+      window.cut30SetLoadEvidence?.(cache.Carichi,readStarted,sourceSheet);
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
