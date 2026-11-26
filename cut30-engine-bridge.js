@@ -22,6 +22,7 @@
   async function refreshCloud(silent=false){
     if(busy||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
     busy=true;
+    const sourceSheet=state.prefs.sheetId;
     try{
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
       const end={Carichi:'J',Valutazioni:'L',AnalisiAuto:'P'};
@@ -37,6 +38,7 @@
       }
       const loadValues=result.valueRanges?.[0]?.values;
       if(!Array.isArray(loadValues)||!loadValues.length||headers.Carichi.some((k,i)=>loadValues[0][i]!==k))throw Error('Schema Carichi inatteso: storico non verificato');
+      if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
       cache.Carichi=parseTable(loadValues);
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
@@ -46,8 +48,9 @@
         const meta=await googleApi('?fields=sheets.properties.title');
         cache.CicloAuto=meta.sheets?.some(x=>x.properties.title==='CicloAuto')?parseTable((await googleApi('/values/'+encodeURIComponent("'CicloAuto'!A:I")+'?valueRenderOption=UNFORMATTED_VALUE')).values||[]):[];
       }catch{cache.CicloAuto=[];}
+      if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
       loadedAt=Date.now();
-      window.cut30SetLoadEvidence?.(cache.Carichi,loadedAt,state.prefs.sheetId);
+      window.cut30SetLoadEvidence?.(cache.Carichi,loadedAt,sourceSheet);
       if(engine)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
     }catch(err){console.error('CUT30 Engine refresh:',err);if(!silent)toast('Aggiornamento motore non riuscito: '+err.message);}
@@ -504,7 +507,6 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
-    if(e.target.closest('[data-cut-refresh]')){refreshCloud(true);return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
     const edit=e.target.closest('[data-wl-edit]');if(edit){const ex=logExercises().find(x=>x.id===edit.dataset.wlId);if(ex)fillLog(ex,cache.Carichi.find(x=>x.id===edit.dataset.wlEdit),true);return;}

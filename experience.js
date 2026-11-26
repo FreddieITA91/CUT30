@@ -128,17 +128,18 @@
     const total=order.reduce((sum,g)=>sum+muscle[g].working,0),planned=order.reduce((sum,g)=>sum+muscle[g].planned,0),legacy=order.reduce((sum,g)=>sum+muscle[g].unclassified,0);
     const metric=g=>{const v=muscle[g],status=v.status,pc=v.percent===null?'N/D':v.percent+'%';
       return '<div class="cx-muscle-item ms-'+status+'"><div class="ms-line"><strong>'+h(g)+'</strong><span class="ms-pct">'+pc+(v.partial&&v.percent!==null?'*':'')+'</span></div>'+
-       '<div class="ms-series"><b>'+v.working+'</b> / '+v.planned+' serie allenanti <small>· '+v.expected+' previste a oggi</small></div>'+
+       '<div class="ms-series"><b>'+(evidence.available?v.working:'—')+'</b> / '+v.planned+' serie allenanti <small>· '+v.expected+' previste a oggi</small></div>'+
        '<div class="ms-track" aria-label="'+h(g)+' '+pc+'"><i style="width:'+Math.min(100,v.percent??0)+'%"></i></div>'+
-       (v.unclassified?'<small class="ms-note">'+v.unclassified+' serie storiche non classificate</small>':'')+
+       (v.unclassified?'<small class="ms-note">'+v.unclassified+' serie storiche non classificate · '+v.recorded+' registrate totali'+(v.recordedPercent===null?'':' ('+v.recordedPercent+'% del piano, tipo non verificato)')+'</small>':'')+
+       (v.checkedProxy&&v.missing?'<small class="ms-note">Spunte storiche presenti; volume non ricostruito.</small>':'')+
        (v.secondary?'<small class="ms-note">'+v.secondary+' coinvolgimenti indiretti</small>':'')+
        (v.missing?'<small class="ms-note">Dettaglio mancante per '+v.missing+' esercizi</small>':'')+
        (v.conflicts?'<small class="ms-note">'+v.conflicts+' serie in conflitto</small>':'')+'</div>';};
     return '<section class="cx-card cx-muscle-card" id="muscle-coverage"><div class="cx-head"><div><span class="cx-kicker">TRAIN / '+periodLabel(a)+'</span><h2>Copertura muscolare</h2></div><button type="button" class="cx-ghost-action ms-refresh" data-cut-refresh aria-label="Aggiorna serie">'+icon("refresh")+'</button></div>'+
-      '<div class="ms-overview"><div><strong>'+ (evidence.available?total:'—') +'</strong><span> / '+planned+' serie allenanti</span><small>'+legacy+' serie storiche non classificate</small></div><span class="ms-data">'+(evidence.available?'Storico caricato':'Storico da caricare')+'</span></div>'+
+      '<div class="ms-overview"><div><strong>'+ (evidence.available?total+legacy:'—') +'</strong><span> serie registrate</span><small>'+ (evidence.available?total:'—') +' / '+planned+' allenanti · '+legacy+' non classificate</small></div><span class="ms-data">'+(evidence.available?'Storico '+(loadEvidence.at?new Date(loadEvidence.at).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):'caricato'):'Storico da caricare')+'</span></div>'+
       '<div class="cx-muscle-mini">'+anatomySvg(muscle,true)+'</div><div class="ms-legend"><span class="ms-zero">Non registrato</span><span class="ms-partial">Parziale</span><span class="ms-goal">Obiettivo</span><span class="ms-over">Oltre</span><span class="ms-unknown">N/D</span></div>'+
       '<div class="cx-muscle-summary">'+order.map(metric).join('')+'</div>'+
-      '<p class="cx-disclaimer">Serie allenanti registrate / obiettivo dell’intero periodo. N/D = informazione insufficiente o nessun obiettivo. * = dato parziale. Le serie non classificate, il riscaldamento e i coinvolgimenti indiretti non aumentano la percentuale. Le spunte storiche non sono misure di volume.</p>'+
+      '<p class="cx-disclaimer">Totale registrato = allenanti + non classificate, escluso riscaldamento. Percentuale = serie allenanti / obiettivo dell’intero periodo. N/D = informazione insufficiente o nessun obiettivo. * = dato parziale. Le serie non classificate, il riscaldamento e i coinvolgimenti indiretti non aumentano la percentuale. Le spunte storiche non sono misure di volume.</p>'+
       (evidence.unmatched||evidence.invalid||evidence.conflicts?'<p class="ms-warning">Da riconciliare: '+evidence.unmatched+' record non associati, '+evidence.invalid+' non validi, '+evidence.conflicts+' conflitti. Nessuna serie inventata.</p>':'')+
       (!evidence.available?'<p class="ms-warning">Connetti Google e aggiorna per leggere Carichi. Nessun dato mancante è interpretato come zero.</p>':'')+'</section>';
   }
