@@ -15,8 +15,8 @@ function fixture(){
  const values={esercizio:ex.name,serie:'1',kg:'22',reps:'10',palestra:'B',attrezzo:'Manubri',unita:'kg per mano',tipo_serie:'allenante',rir:'',rpe:''};
  const form={dataset:{wlForm:ex.id,wlDate:day},checkValidity:()=>true,querySelector:q=>q==='[data-wl-feedback]'?feedback:button};
  const state={prefs:{sheetId:'test-only'},tables:{Esercizi:[],Allenamenti:[]}};
- const globals={window:{},document:{readyState:'loading',addEventListener(){},querySelectorAll:()=>[form]},state,currentPage:'training',selectedDate:day,localDate:()=>day,programFor:()=> 'Upper B',WORKOUTS,core,log,muscle,flow,token:'mock',tokenExpires:Date.now()+9999999,FormData:class{get(k){return values[k]}*[Symbol.iterator](){yield*Object.entries(values)}},googleApi:async(path,method,body)=>{if(method==='POST'){writes.push(body);rows.push(...body.values);return {}}return {values:structuredClone(rows)};},render(){},toast:x=>toasts.push(x),isDone:()=>false,upsert(){},now:()=>new Date().toISOString(),console:{warn(){},error(){}}};
- const injected=source.replace(/\}\)\(\);\s*$/,'engine=core;logEngine=log;muscleEngine=muscle;flowEngine=flow;busy=true;window.api={submitSet,onSubmit,setRows,priorRows,currentOpen,setOpen,collapseCompleted};})();');
+ const globals={window:{},document:{readyState:'loading',addEventListener(){},querySelectorAll:()=>[form]},h:String,state,currentPage:'training',selectedDate:day,localDate:()=>day,programFor:()=> 'Upper B',WORKOUTS,core,log,muscle,flow,token:'mock',tokenExpires:Date.now()+9999999,FormData:class{get(k){return values[k]}*[Symbol.iterator](){yield*Object.entries(values)}},googleApi:async(path,method,body)=>{if(method==='POST'){writes.push(body);rows.push(...body.values);return {}}return {values:structuredClone(rows)};},render(){},toast:x=>toasts.push(x),isDone:()=>false,upsert(){},now:()=>new Date().toISOString(),console:{warn(){},error(){}}};
+ const injected=source.replace(/\}\)\(\);\s*$/,'engine=core;logEngine=log;muscleEngine=muscle;flowEngine=flow;busy=true;window.api={submitSet,onSubmit,setRows,priorRows,isExerciseOpen,toggleExercise,collapseCompleted,exerciseRow};})();');
  runInNewContext(injected,globals);
  return {rows,writes,values,form,feedback,button,globals,api:globals.window.api};
 }
@@ -28,4 +28,21 @@ test('optional equipment saves and counts a real set, never promotes unknown equ
 test('historical and other-program rows never enter the selected session',async()=>{const x=fixture();const old=['old','2026-11-19','Upper B',ex.name,1,18,10,'kg per mano','',day];const other=['other',day,'Upper A',ex.name,1,18,10,'kg per mano','',day];x.rows.push(old,other);await x.api.submitSet(x.form);assert.deepEqual(x.api.setRows(ex).map(x=>x.id),[x.rows[3][0]]);assert.equal(x.api.priorRows(ex)[0].id,'old');assert.equal(x.writes.length,1);});
 test('aliases and equipment changes cannot create a second row for an occupied series slot',async()=>{const x=fixture();x.rows.push(['old-alias',day,'Upper B','Panca piana con manubri',1,18,10,'kg per mano','',day]);x.values.attrezzo='Altro';await assert.rejects(x.api.submitSet(x.form),/già presente/);assert.equal(x.writes.length,0);});
 
-test('exercise rows start closed, last verified working set closes only the manually opened exercise',async()=>{const x=fixture();assert.equal(x.api.currentOpen(),null);x.api.setOpen(day,ex.id);assert.equal(x.api.currentOpen(),ex.id);for(let i=1;i<=ex.sets;i++){x.values.serie=String(i);await x.api.submitSet(x.form);assert.equal(x.api.currentOpen(),i===ex.sets?null:ex.id);}assert.equal(x.writes.length,ex.sets);x.api.setOpen(day,'ub-cablerow');assert.equal(x.api.collapseCompleted(day,ex.id),false);assert.equal(x.api.currentOpen(),'ub-cablerow');});
+
+
+test('actual exercise markup starts closed, stays open across rendering and intermediate saves, closes on last working set',async()=>{
+ const x=fixture(),items=WORKOUTS['Upper B'],other=items[2];
+ const html=e=>x.api.exerciseRow(e,0,items);
+ for(const e of items){assert.match(html(e),/aria-expanded="false"/);assert.match(html(e),/hidden inert style="display:none!important"/);}
+ x.api.toggleExercise(day,ex.id);assert.match(html(ex),/aria-expanded="true"/);assert.doesNotMatch(html(ex),/class="wl-expand" hidden/);
+ x.api.toggleExercise(day,other.id);assert.match(html(ex),/aria-expanded="true"/);assert.match(html(other),/aria-expanded="true"/);
+ for(let i=1;i<=ex.sets;i++){x.values.serie=String(i);await x.api.submitSet(x.form);assert.equal(x.api.isExerciseOpen(day,ex.id),i<ex.sets);assert.match(html(other),/aria-expanded="true"/);}
+ assert.match(html(ex),/aria-expanded="false"/);assert.equal(x.writes.length,ex.sets);
+ x.api.toggleExercise(day,other.id);assert.match(html(other),/aria-expanded="false"/);
+});
+test('opening is isolated by diary, date and program, never persisted across fresh app instances',()=>{
+ const x=fixture(),items=WORKOUTS['Upper B'];x.api.toggleExercise(day,ex.id);
+ assert.equal(x.api.isExerciseOpen(day,ex.id),true);assert.equal(x.api.isExerciseOpen('2026-11-19',ex.id),false);
+ x.globals.state.prefs.sheetId='other';assert.equal(x.api.isExerciseOpen(day,ex.id),false);
+ assert.equal(fixture().api.isExerciseOpen(day,ex.id),false);
+});
