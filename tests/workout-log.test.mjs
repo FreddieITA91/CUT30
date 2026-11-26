@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {WORKOUTS} from '../engine/workout-catalog.mjs';
+import {guideFor,namesFor,latestSession,workingCount,nextSet,unitParts,encodeGif} from '../engine/workout-log.mjs';
+const ex=WORKOUTS['Upper B'][1],unit='kg per mano | palestra A | attrezzo manubri';
+const row=(number,date='2026-11-26',origin='allenante',u=unit)=>({esercizio:ex.name,data:date,numero_serie:number,carico_kg:20,ripetizioni:8,origine:origin,unita_carico:u});
+const effort=x=>({tipo_serie:x});
+test('every prescribed exercise has photo frames and technical guidance',()=>{for(const e of Object.values(WORKOUTS).flat())for(const v of namesFor(e)){const g=guideFor(e,v);assert.equal(g.frames.length,2);assert.ok(g.technique&&g.feel&&g.muscle);}});
+test('last session excludes selected day and future and preserves per-set values',()=>{assert.deepEqual(latestSession(ex,[row(1,'2026-11-20'),row(1,'2026-11-24'),row(2,'2026-11-24'),row(3),row(4,'2026-11-27')],'2026-11-26').map(x=>x.numero_serie),[1,2]);});
+test('only comparable, unique working sets count towards completion',()=>{assert.equal(workingCount(ex,[row(1),row(2),row(3,'2026-11-26','riscaldamento'),row(4,'2026-11-26','allenante','kg'),row(5,'2026-11-26','allenante',unit.replace(' A ',' B '))],effort),2);assert.equal(workingCount(ex,[row(1),row(1),row(2)],effort),1);});
+test('next number avoids overwriting and identity is explicit',()=>{assert.equal(nextSet(ex,[row(1),row(3)]),2);assert.deepEqual(unitParts(unit),{type:'kg per mano',gym:'A',equipment:'manubri'});assert.equal(unitParts('kg'),null);});
+test('GIF has correct signature, logical size, looping extension and terminator',()=>{const f=new Uint8Array(4*2*2);const gif=encodeGif(2,2,[f,f]);assert.equal(Buffer.from(gif.slice(0,6)).toString(),'GIF89a');assert.equal(gif[6],2);assert.equal(gif[8],2);assert.equal(gif.at(-1),59);assert.ok(Buffer.from(gif).includes(Buffer.from('NETSCAPE2.0')));});
