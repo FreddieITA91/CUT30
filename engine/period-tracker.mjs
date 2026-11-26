@@ -40,7 +40,7 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
   const ex=strength||plan.program==='Cardio H + core'?plan.exercises:[];
   const d={date,program:plan.program,source,training,cardio:plan.cardio.duration_min,core:plan.core_minutes,
     weights:strength?(wm.length>=2?round(median(wm)):null):0,calorieForecast:training?(kc.length>=2?round(median(kc)):null):0,
-    exercises:ex,nutrition:targetsFor(date)};
+    exercises:ex,nutrition:targetsFor(date,plan.program)};
   d.minutes=d.weights===null?null:d.weights+d.cardio+d.core;
   planCache.set(date,d);return d;
  }
@@ -56,7 +56,7 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
   const steps=stepValues.length?Math.max(...stepValues):null;
   const checked=new Set(checks.filter(x=>x.data===date&&x.programma===p.program&&String(x.completato).toLowerCase()==='true').map(x=>x.esercizio));
   const nutritionRows=active?meals.filter(x=>x.data===date):[];
-  return {...p,active,hasWorkout:!!w,actual,steps,cardioGoal:cardioQuota(date),checked:p.exercises.filter(e=>checked.has(e.id)).length,
+  return {...p,active,hasWorkout:!!w,actual,steps,cardioGoal:cardioQuota(date),checked:p.exercises.filter(e=>checked.has(e.id)).length,checkedIds:[...checked],
     checklistKnown:checks.some(x=>x.data===date&&x.programma===p.program),
     nutritionActual:Object.fromEntries(keys.map(k=>[k,measured(nutritionRows,k)])),nutritionLogged:nutritionRows.length>0};
  });
@@ -67,7 +67,7 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
  const exerciseExpected=total(past,x=>x.exercises.length),exerciseActual=total(past,x=>x.checked);
  const plannedSessions=total(past,x=>Number(x.training)),completed=total(past,x=>Number(x.training&&x.actual.done));
  const minutesExpected=complete(past,x=>x.minutes),minutesActual=total(past,x=>x.actual.minutes||0);
- const cardioActual=total(past,x=>x.actual.cardio||0),cardioExpected=total(past,x=>x.cardio),cardioGoal=complete(daily,x=>x.cardioGoal),quotaToDate=complete(past,x=>x.cardioGoal);
+ const cardioActual=total(past,x=>x.actual.cardio||0),cardioExpected=total(past,x=>x.cardio),cardioGoalRaw=complete(daily,x=>x.cardioGoal),quotaRaw=complete(past,x=>x.cardioGoal),cardioGoal=cardioGoalRaw===null?null:round(cardioGoalRaw),quotaToDate=quotaRaw===null?null:round(quotaRaw);
  const metrics={
   steps:metric(stepsActual,stepsGoal*past.length,stepsGoal*daily.length),
   exercises:metric(past.some(x=>x.actual.done&&x.exercises.length&&!x.checklistKnown)&&!exerciseActual?null:exerciseActual,exerciseExpected,total(daily,x=>x.exercises.length)),
@@ -77,12 +77,15 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
  };
  // Missing step observations do not become zero nor count as full-period coverage.
  if(knownSteps.length!==past.length)metrics.steps.score=null;
+ if(past.some(x=>x.actual.done&&x.exercises.length&&!x.checklistKnown))metrics.exercises.score=null;
  const incompleteWorkouts=past.some(x=>x.hasWorkout&&(x.actual.minutes===null||x.actual.cardio===null));
  if(incompleteWorkouts){metrics.minutes.score=null;metrics.cardio.score=null;}
+ const muscles=Object.fromEntries(['Petto','Schiena','Spalle','Braccia','Quadricipiti','Posteriori','Polpacci','Core'].map(g=>[g,{done:0,planned:0}]));
+ for(const d of daily)for(const ex of d.exercises){if(!muscles[ex.muscle])continue;muscles[ex.muscle].planned+=ex.sets;if(d.active&&d.checkedIds.includes(ex.id))muscles[ex.muscle].done+=ex.sets;}
  const scores=Object.values(metrics).map(m=>m.score).filter(x=>x!==null);
  const nutrition=Object.fromEntries(keys.map(k=>[k,{actual:measured(past.map(x=>x.nutritionActual),k),
     expected:complete(past,x=>num(x.nutrition[k])),full:complete(daily,x=>num(x.nutrition[k]))}]));
- return {period,today,start:dates[0],end:dates.at(-1),daily,elapsedDays:past.length,metrics,index:scores.length?Math.round(sum(scores)/scores.length):null,coverage:scores.length,
+ return {period,today,muscles,start:dates[0],end:dates.at(-1),daily,elapsedDays:past.length,metrics,index:scores.length?Math.round(sum(scores)/scores.length):null,coverage:scores.length,
    cardioPlanned:total(daily,x=>x.cardio),cardioPlannedToDate:cardioExpected,cardioGap:cardioGoal===null?null:round(cardioGoal-total(daily,x=>x.cardio)),
    calories:{actual:calorieActual,forecast:complete(daily,x=>x.calorieForecast),forecastToDate:complete(past,x=>x.calorieForecast),recordedSessions:knownKcal.length,partial:past.some(x=>x.hasWorkout&&x.actual.kcal===null)},
    nutrition,nutritionDays:past.filter(x=>x.nutritionLogged).length,stepDays:knownSteps.length};

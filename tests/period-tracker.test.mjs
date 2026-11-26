@@ -29,3 +29,18 @@ test('confirmed plan wins; missing measured calories remain missing',()=>{
 test('nutrition totals use each day type and unknown nutrition stays unknown',()=>{
  const a=build(args);assert.equal(a.nutrition.kcal.actual,null);assert.equal(a.nutrition.kcal.expected,8000);assert.equal(a.nutrition.kcal.full,13800);
 });
+
+test('dashboard rendering does not reference the obsolete calorie or radar properties',async()=>{
+ const {readFileSync}=await import('node:fs');const {runInNewContext}=await import('node:vm');
+ const source=readFileSync(new URL('../experience.js',import.meta.url),'utf8');
+ const a=build(args),daily=build({...args,period:'day'});
+ const globals={window:{},document:{readyState:'loading',addEventListener(){}},renderDashboard(){},renderProgress(){},renderNutrition(){},render(){},h:String,localDate:()=>today,state:{tables},programFor,targetsFor,n:Number,cfg:()=>0,buildStub:({period})=>period==='day'?daily:a,example:a,dayLabel:d=>d,parseDate:d=>new Date(d+'T12:00:00Z')};
+ const injected=source.replace(/\}\)\(\);\s*$/, 'trackerEngine={buildPeriodTracker:buildStub};window.output=[radarCard(example),periodSelector(example),dailyPlanCard(example),cards(example),weekCard(example),muscleSummary(example)];})();');
+ runInNewContext(injected,globals);
+ assert.equal(globals.window.output.length,6);
+ assert.match(globals.window.output[0],/Esercizi confermati/);
+ assert.match(globals.window.output[1],/aria-pressed="true"[^>]*>Settimana/);
+ assert.match(globals.window.output[3],/Calorie attive oggi/);
+ assert.match(globals.window.output[3],/Nessun allenamento registrato oggi/);
+ assert.ok(!source.includes('a.values[i]'));
+});
