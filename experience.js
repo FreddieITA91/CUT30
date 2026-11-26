@@ -68,17 +68,17 @@
     const calculate=levelEngine?.buildTrainingLevel||trackerEngine?.buildTrainingLevel;
     if(typeof calculate!=='function')return null;
     const today=localDate(),start=String(cfg('data_inizio')||'2026-11-02'),sheet=state.prefs?.sheetId,loads=loadEvidence.sheetId===sheet?loadEvidence:{rows:[],available:false},cardio=cardioEvidence.sheetId===sheet?cardioEvidence:{rows:[],available:false};
-    const workouts=state.tables.Allenamenti||[];
-    const key=JSON.stringify([today,start,sheet,workouts,loads.at||0,cardio.at||0,loads.available,cardio.available]);
+    const workouts=state.tables.Allenamenti||[],calibration=cfg('cut30_level_baseline_v1');
+    const key=JSON.stringify([today,start,sheet,workouts,calibration,loads.at||0,cardio.at||0,loads.available,cardio.available]);
     if(levelCache?.key===key)return levelCache.result;
-    try{const result=calculate({today,start,workouts,loads:loads.rows,segments:cardio.rows,loadAvailable:loads.available,cardioAvailable:cardio.available});
+    try{const result=calculate({today,start,workouts,calibration,loads:loads.rows,segments:cardio.rows,loadAvailable:loads.available,cardioAvailable:cardio.available});
     levelCache={key,result};levelStatus='ready';levelError='';return result;}catch(err){levelStatus='error';levelError=String(err?.message||err);console.error('CUT30 level calculation:',err);return null;}
   }
   window.cut30LevelForDate=date=>{const xp=makeXp();return xp?{event:xp.events.find(e=>e.date===date)||null,provisional:xp.provisional}:null;};
   async function loadLevelEngine(retry=false){
     if(levelFlight)return levelFlight;
     levelStatus='loading';levelError='';
-    levelFlight=(async()=>{try{const mod=await import('./engine/training-level.mjs?v=3.6.1'+(retry?'&retry='+Date.now():''));
+    levelFlight=(async()=>{try{const mod=await import('./engine/training-level.mjs?v=3.7.0'+(retry?'&retry='+Date.now():''));
       if(typeof mod.buildTrainingLevel!=='function')throw Error('Modulo livello non aggiornato');
       levelEngine=mod;levelCache=null;levelStatus='ready';
     }catch(err){levelStatus='error';levelError=String(err?.message||err);console.error('CUT30 level module:',err);}
@@ -144,8 +144,9 @@
   }
   function xpBanner(){
     const xp=makeXp();if(!xp)return levelPlaceholder();
+    if(!xp.calibrated)return '<a class="fit-level" href="#progress" data-nav="progress"><div class="fit-level-number"><small>LVL</small><strong>—</strong><span>/100</span></div><div class="fit-level-main"><div class="fit-level-title"><b>Livello CUT30</b><span>'+tFmt(xp.total)+' XP</span></div><small>Calibra il profilo di partenza · esperienza già acquisita conservata</small></div><span class="fit-chevron">›</span></a>';
     const last=xp.events.at(-1),status=xp.provisional?'Storico parziale':last?outcomes[last.outcome]:'Nessuna seduta valutata';
-    return '<a class="fit-level" href="#progress" data-nav="progress" aria-label="Apri progressione livello CUT30"><div class="fit-level-number"><small>LVL</small><strong>'+xp.level+'</strong><span>/100</span></div><div class="fit-level-main"><div class="fit-level-title"><b>Livello CUT30</b><span>'+tFmt(xp.total)+' XP</span></div>'+track(xp.level===100?1:xp.into,xp.step||1)+'<small>'+(xp.level===100?'Livello massimo':tFmt(xp.remaining)+' XP al prossimo livello')+' · '+status+'</small></div><span class="fit-chevron">›</span></a>';
+    return '<a class="fit-level" href="#progress" data-nav="progress" aria-label="Apri progressione livello CUT30"><div class="fit-level-number"><small>LVL</small><strong>'+xp.level+'</strong><span>/100</span></div><div class="fit-level-main"><div class="fit-level-title"><b>Livello CUT30</b><span>'+tFmt(xp.total)+' XP acquisiti</span></div>'+track(xp.level===100?1:xp.into,xp.step||1)+'<small>'+(xp.level===100?'Livello massimo':tFmt(xp.remaining)+' XP al prossimo livello')+' · '+status+'</small></div><span class="fit-chevron">›</span></a>';
   }
   function cards(a){
     const today=aggregates('day'),m=a.metrics;
@@ -247,19 +248,34 @@
   renderNutrition=function(){
     return '<div class="cx-section-lead"><div><span class="cx-kicker">Diario CUT30</span><h2>Pasti e obiettivi</h2><p>Registra i pasti, confronta i nutrienti e importa le registrazioni aggiunte da ChatGPT.</p></div><button data-cut-refresh class="cx-ghost-action">'+icon("refresh")+' Aggiorna dal cloud</button></div>'+nativeNutrition();
   };
+  function calibrationPanel(xp){
+    const options=[['restart','5','Ripresa / principiante','Attività occasionale, ripresa dopo una pausa o nuova routine.'],['regular','20','Allenamento regolare','Routine stabile, circa 2–3 sedute alla settimana da alcuni mesi.'],['experienced','35','Allenamento strutturato','Programma seguito con continuità, carichi e cardio monitorati.'],['advanced','50','Esperienza avanzata','Allenamento strutturato da anni, con progressioni e recupero pianificati.']];
+    const profile=xp.profile||{},saved=xp.baseline;
+    return '<section class="cx-card fit-calibration"><h2>Profilo di partenza</h2><p class="fit-caption">Riferimenti degli ultimi 28 giorni (non un test atletico).</p><div class="fit-cal-grid"><div><b>'+ (profile.sessions28??0)+'</b><small>Sedute</small></div><div><b>'+ (profile.weeks28??0)+'/4</b><small>Settimane attive</small></div><div><b>'+ (xp.loadAvailable?profile.strengthExercises??0:'—')+'</b><small>Esercizi confrontabili*</small></div><div><b>'+ (xp.cardioAvailable?profile.cardioSessions??0:'—')+'</b><small>Sedute cardio con riferimenti*</small></div></div>'+
+      '<p class="fit-caption">* Serie classificate con sforzo registrato e attrezzo identificato; cardio con durata, distanza e FC. Non sono percentili di popolazione.</p>'+
+      (saved?'<p>Profilo confermato: <strong>'+h(saved.label)+' · LVL '+saved.level+'</strong> ('+h(saved.date)+').</p><details><summary>Modifica profilo</summary>':'<p>Scegli il profilo che descrive l’esperienza già acquisita, anche prima di CUT30.</p>')+
+      '<form id="fit-cal-form" class="fit-cal-form">'+options.map(([id,l,label,desc])=>'<label class="fit-cal-option"><input type="radio" name="profile" value="'+id+'" '+(saved?.profile===id?'checked':'')+' required><span><b>'+label+' · LVL '+l+'</b><small>'+desc+'</small></span></label>').join('')+'<button type="submit" class="btn">Conferma profilo iniziale</button></form>'+
+      (saved?'</details>':'')+'<p class="fit-caption">Scala di gioco convenzionale e autodichiarata: nessun livello certifica la forma fisica. Gli XP già registrati si aggiungono al profilo, senza assegnarli due volte.</p></section>';
+  }
+  function xpHistory(xp){
+    const events=xp.events||[];if(!events.length)return '<p class="fit-caption">Il grafico sarà disponibile dopo la prima seduta registrata.</p>';
+    const sample=events.slice(-60),values=sample.map(v=>v.total),top=Math.max(1,...values),low=Math.min(0,...values);
+    const pts=values.map((v,i)=>[14+(sample.length===1?146:i*292/(sample.length-1)),98-84*(v-low)/(top-low||1)]);
+    return '<div class="fit-xp-chart"><h3>Andamento esperienza</h3><svg viewBox="0 0 320 115" role="img" aria-label="XP cumulativi delle ultime '+sample.length+' sedute"><path d="M14 98H306 M14 56H306 M14 14H306" stroke="#424246" fill="none"/><polyline points="'+pts.map(p=>p.join(',')).join(' ')+'" fill="none" stroke="#b8f34b" stroke-width="2.5" stroke-linejoin="round"/>'+pts.map(([x,y])=>'<circle cx="'+x+'" cy="'+y+'" r="2.5" fill="#b8f34b"/>').join('')+'</svg><div class="fit-xp-chart-label"><small>'+h(sample[0].date)+'</small><b>'+tFmt(xp.total)+' XP</b><small>'+h(sample.at(-1).date)+'</small></div><p class="fit-caption">XP da sedute, escluso il credito del profilo iniziale · '+(xp.provisional?'storico parziale':'ricalcolo dallo storico')+'.</p></div>';
+  }
   function xpCard(){
     const xp=makeXp();if(!xp)return '<section class="cx-card"><h2>Progressione personale</h2><p>Il dettaglio sarà disponibile al termine del caricamento del livello.</p></section>';
     const recent=xp.events.slice(-10).reverse();
-    return '<section class="cx-card fit-level-detail"><div class="cx-head"><div><h2>Progressione personale</h2><span class="fit-caption">Livello '+xp.level+' / 100 · '+xp.total+' XP</span></div></div>'+
+    return calibrationPanel(xp)+'<section class="cx-card fit-level-detail"><div class="cx-head"><div><h2>Progressione personale</h2><span class="fit-caption">Livello '+(xp.calibrated?xp.level:'da calibrare')+' / 100 · '+xp.total+' XP</span></div></div>'+
      (xp.provisional?'<p class="ms-warning">Dati parziali: il livello può variare quando si caricano Carichi e segmenti cardio.</p><button type="button" class="btn btn-quiet" data-cut-refresh>↻ Aggiorna storico</button>':'')+
      '<div class="fit-level-rules">'+[['improvement',35],['maintenance',10],['decline',-15],['baseline',5],['unknown',0]].map(([k,v])=>'<div><span>'+outcomes[k]+'</span><b class="xp-'+k+'">'+signedXp(v)+'</b></div>').join('')+'</div>'+
-     '<h3>Ultime sedute</h3>'+(recent.length?recent.map(e=>'<details class="fit-xp-event"><summary><span><b>'+h(e.program)+'</b><small>'+h(e.date)+' · '+outcomes[e.outcome]+'</small></span><strong class="xp-'+e.outcome+'">'+signedXp(e.applied)+'</strong></summary><p>Livello dopo la seduta: '+e.level+'. '+(e.evidence.length?'Confronti omogenei:':'Nessun confronto omogeneo disponibile.')+'</p>'+e.evidence.map(v=>'<p>'+h(v.exercise)+' · '+h(v.domain)+' · '+h(v.trend==='up'?'Migliora':v.trend==='down'?'Calo ripetuto':v.trend==='flat'?'Stabile':'Incerto')+' · '+(v.change>0?'+':'')+v.change+'% ('+v.comparisons+' confronti)</p>').join('')+'</details>').join(''):'<p class="fit-caption">Nessuna seduta conclusa con dati utilizzabili.</p>')+
-     '<details class="fit-level-method"><summary>Come viene calcolato</summary><p>La scala 1–100 misura la progressione nel programma CUT30, non la forma fisica assoluta. Il livello 1 è il punto di partenza, non una diagnosi; 100 non certifica lo status di atleta. Il costo del livello aumenta da 100 XP di 10 XP per livello. Lo storico viene ricalcolato senza bonus ripetuti.</p><p>Forza: stesso esercizio, attrezzo, palestra, unità, numero serie e sforzo comparabile (RIR/RPE); più carico senza meno ripetizioni, oppure più ripetizioni a pari carico. Cardio: tapis o piscina, stesso tipo e segmento, durata e frequenza media simili, pendenza comparabile sul tapis; confronto indicativo, non VO₂max. Miglioramento almeno 3% di carico/ritmo o una ripetizione in più; calo almeno 5% o due ripetizioni in meno a pari carico, per due confronti consecutivi. Esito della seduta per maggioranza dei confronti per esercizio. Dati mancanti o esiti discordanti non generano penalità. Recupero programmato, peso, BMI e kcal non assegnano XP.</p></details></section>';
+     xpHistory(xp)+'<h3>Ultime sedute</h3>'+(recent.length?recent.map(e=>'<details class="fit-xp-event"><summary><span><b>'+h(e.program)+'</b><small>'+h(e.date)+' · '+outcomes[e.outcome]+'</small></span><strong class="xp-'+e.outcome+'">'+signedXp(e.applied)+'</strong></summary><p>Livello dopo la seduta: '+(e.level??'da calibrare')+'. '+(e.evidence.length?'Confronti omogenei:':'Nessun confronto omogeneo disponibile.')+'</p>'+e.evidence.map(v=>'<p>'+h(v.exercise)+' · '+h(v.domain)+' · '+h(v.trend==='up'?'Migliora':v.trend==='down'?'Calo ripetuto':v.trend==='flat'?'Stabile':'Incerto')+' · '+(v.change>0?'+':'')+v.change+'% ('+v.comparisons+' confronti)</p>').join('')+'</details>').join(''):'<p class="fit-caption">Nessuna seduta conclusa con dati utilizzabili.</p>')+
+     '<details class="fit-level-method"><summary>Come viene calcolato</summary><p>La scala 1–100 misura la progressione nel programma CUT30, non la forma fisica assoluta. Il profilo iniziale è confermato dall’utente; 100 non certifica lo status di atleta. Il costo del livello aumenta da 100 XP di 10 XP per livello. Lo storico viene ricalcolato senza bonus ripetuti.</p><p>Forza: stesso esercizio, attrezzo, palestra, unità, numero serie e sforzo comparabile (RIR/RPE); più carico senza meno ripetizioni, oppure più ripetizioni a pari carico. Cardio: tapis o piscina, stesso tipo e segmento, durata e frequenza media simili, pendenza comparabile sul tapis; confronto indicativo, non VO₂max. Miglioramento almeno 3% di carico/ritmo o una ripetizione in più; calo almeno 5% o due ripetizioni in meno a pari carico, per due confronti consecutivi. Esito della seduta per maggioranza dei confronti per esercizio. Dati mancanti o esiti discordanti non generano penalità. Recupero programmato, peso, BMI e kcal non assegnano XP.</p></details></section>';
   }
   renderProgress=function(){
     const a=aggregates(),base=nativeProgress();
-    if(!a)return base;
-    return '<div class="cx-section-lead"><div><span class="cx-kicker">PERFORMANCE / TRACK</span><h2>Progressi</h2><p>Volume registrato, peso corporeo e aderenza al piano.</p></div></div>'+periodSelector(a)+muscleSummary(a)+radarCard(a)+base+xpCard()+'<details class="cx-card cx-report-details"><summary>Dettaglio giorno per giorno</summary>'+dailyPlanCard(a)+'</details>';
+    if(!a)return base+xpCard();
+    return '<div class="cx-section-lead"><div><span class="cx-kicker">PERFORMANCE / TRACK</span><h2>Progressi</h2><p>Volume registrato, peso corporeo e aderenza al piano.</p></div></div>'+xpCard()+periodSelector(a)+muscleSummary(a)+radarCard(a)+base+'<details class="cx-card cx-report-details"><summary>Dettaglio giorno per giorno</summary>'+dailyPlanCard(a)+'</details>';
   };
   render=function(){
     const ok=originalRender();if(ok===false)return false;
@@ -303,6 +319,7 @@
     }finally{refreshBusy=false;}
   }
   function startup(){
+    document.addEventListener('submit',e=>{if(e.target.id!=='fit-cal-form')return;e.preventDefault();e.stopImmediatePropagation();const profile=new FormData(e.target).get('profile');if(!['restart','regular','experienced','advanced'].includes(profile))return;if(cfg('cut30_level_baseline_v1')&&!confirm('Modificare il profilo di partenza? Gli XP acquisiti restano invariati.'))return;putCfg('cut30_level_baseline_v1',JSON.stringify({version:1,profile,date:localDate()}));levelCache=null;render();toast('Profilo salvato · sincronizza con Google Sheets');},true);
     document.addEventListener("click",e=>{
       const levelRetry=e.target.closest('[data-level-retry]');if(levelRetry){e.preventDefault();levelCache=null;loadLevelEngine(true);render();return;}
       const muscleBtn=e.target.closest("[data-muscle-refresh]");if(muscleBtn){e.preventDefault();e.stopImmediatePropagation();loadMuscleHistory({interactive:true,force:true});return;}
@@ -318,7 +335,7 @@
     window.setInterval(()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>300000)refreshCloud(true);loadMuscleHistory();}},60000);
     document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>120000)refreshCloud(true);loadMuscleHistory();}});
     loadLevelEngine();
-    import("./engine/period-tracker.mjs?v=3.6.1").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
+    import("./engine/period-tracker.mjs?v=3.7.0").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
     render();
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",startup,{once:true});else startup();
