@@ -338,3 +338,17 @@ html,body,.shell{background:var(--bg);color:var(--text)}.sidebar,.bottom-nav{bac
 @media(max-width:400px){.wl-session-compare{gap:5px}.wl-compare-past,.wl-compare-now{padding:5px}.wl-compare-title b{font-size:11px}.wl-set-form>.wl-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.wl-trend-legend b{font-size:12px}}
 
 .wl-volume-head{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-top:5px;color:#b8f34b}.wl-volume-head strong{font-size:25px;font-variant-numeric:tabular-nums}.wl-volume-head small{font-size:10px;font-weight:400;color:var(--muted)}.wl-volume-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;font-size:10px;color:var(--muted);margin:0 0 6px}.wl-volume-stats b{display:block;font-size:13px;color:var(--text);font-variant-numeric:tabular-nums}
+
+/* CUT30 3.9: compact session coaching, live mode, and quick controls. */
+.wl-insights{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.wl-insights>div,.wl-live{background:#181b17;border:1px solid #353b2e;border-radius:10px;padding:9px;min-width:0}
+.wl-insights>div{display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.wl-insights small,.wl-live small{color:#a9afa3;font-size:11px;line-height:1.35;display:block}
+.wl-insights b{font-size:13px;color:#e6efdc}.wl-insights .wl-pr{grid-column:1/-1}
+.wl-live{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}
+.wl-live>div{flex:1;min-width:100px}.wl-live>strong{font-variant-numeric:tabular-nums;color:#b8f34b;font-size:20px}
+.wl-live [data-wl-next]{flex:1 1 100%;white-space:normal}
+.wl-quick{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.wl-quick button{font:inherit;font-size:12px;color:#e0e5da;background:#272a25;border:1px solid #41483c;border-radius:8px;padding:7px 9px;cursor:pointer}
+.wl-quick [data-wl-repeat]{color:#b8f34b}
+@media(max-width:380px){.wl-insights{grid-template-columns:1fr}.wl-insights .wl-pr{grid-column:auto}}
