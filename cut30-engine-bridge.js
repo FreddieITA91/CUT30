@@ -27,8 +27,10 @@
   }
   async function readLoadRows(){
     const sheet=state.prefs.sheetId;
-    const mod=await import('./engine/load-evidence.mjs?v=3.7.3');
-    const rows=await mod.readLoads(googleApi);
+    const response=await googleApi('/values/'+encodeURIComponent("'Carichi'!A:J")+'?valueRenderOption=UNFORMATTED_VALUE');
+    const values=response.values||[];
+    if(!values.length||headers.Carichi.some((k,i)=>String(values[0]?.[i]??'')!==k))throw Error('Intestazioni Carichi non valide');
+    const rows=parseTable(values);
     if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante il caricamento');
     return rows;
   }
@@ -551,8 +553,8 @@
     if(form.dataset.editId&&!existing)throw Error('La serie da modificare non esiste più. Aggiorna la scheda.');
     if(existing&&(existing.data!==date||logEngine.norm(existing.esercizio)!==logEngine.norm(exercise)||Number(existing.numero_serie)!==number||existing.unita_carico!==unit))throw Error('Per correggere una serie mantieni variante, palestra, attrezzo e numero originali.');
     const same=cache.Carichi.find(x=>x.id===canonical);
-    if(!existing&&same)throw Error('Serie già presente: seleziona la serie registrata per modificarla.');
-    if(existing&&!confirm('Confermi la correzione della serie '+number+'?'))return;
+    if(!existing&&same){if(currentPage==='training')render();throw Error('Serie già presente: seleziona la serie registrata per modificarla.');}
+    if(existing&&!confirm('Confermi la correzione della serie '+number+'?')){showSetFeedback(form,'Modifica annullata');return;}
     const rec={id:existing?.id||canonical,data:date,programma:program,esercizio:existing?.esercizio||exercise,numero_serie:number,carico_kg:kg,ripetizioni:reps,unita_carico:unit,
       origine:engine.encodeSetEffort('Confermato da utente PWA CUT30 Engine. Kg dichiarati, non confrontare macchine differenti.',{tipo_serie:data.get('tipo_serie'),rir:data.get('rir'),rpe:data.get('rpe')}),updated_at:new Date().toISOString()};
       const saved=await saveRow('Carichi',rec,existing||null);
@@ -561,7 +563,7 @@
       const after=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&x.programma===program),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
       const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
-      try{if(restEngine&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||logItems().some(x=>x.id!==ex.id&&!x.done),exercise:ex}))beginRest(ex,rec);
+      try{if(restEngine&&date===selectedDate&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||(date===selectedDate&&logItems().some(x=>x.id!==ex.id&&!x.done)),exercise:ex}))beginRest(ex,rec);
       else if(!existing&&date===localDate())stopRest();}catch(err){console.warn('Timer non disponibile:',err);}
       setSaving=false;toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
     }finally{setSaving=false;}
