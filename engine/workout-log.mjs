@@ -1,3 +1,4 @@
+import {readSetEffort} from './cut30.mjs';
 import {resolveExercise} from './muscle-coverage.mjs';
 // CUT30 training log: public-domain exercise imagery, no personal data.
 const source='https://raw.githubusercontent.com/yuhonas/free-exercise-db/f00c92c7dcf1216a928a52c3706c7ce8e2f71ed5/exercises/';
@@ -116,13 +117,20 @@ export function exerciseTrend(ex,rows,through,program,items){
    valid.push(r);
   }
   if(!valid.length)continue;
-  const kg=valid.filter(r=>r.carico_kg!==''&&r.carico_kg!=null&&Number.isFinite(Number(r.carico_kg))&&Number(r.carico_kg)>=0);
+  const eligible=valid.filter(r=>readSetEffort(r.origine).tipo_serie!=='riscaldamento');
+  const kg=eligible.filter(r=>r.carico_kg!==''&&r.carico_kg!=null&&Number.isFinite(Number(r.carico_kg))&&Number(r.carico_kg)>=0);
   const kinds=new Set(kg.map(r=>norm(unitParts(r.unita_carico)?.type||r.unita_carico||'non specificato')));
   const variants=new Set(kg.map(r=>norm(r.esercizio)));
   // Mixed units/variants must not be silently aggregated as one maximum.
-  const mixed=kinds.size>1||variants.size>1;
+  const identities=new Set(kg.map(r=>{const u=unitParts(r.unita_carico);return u?JSON.stringify([norm(u.type),u.gym,norm(u.equipment)]):'';}));
+  const mixed=kinds.size>1||variants.size>1||identities.size>1;
+  const identity=identities.size===1?[...identities][0]:'';
+  const comparable=!!identity&&kg.every(r=>{const u=unitParts(r.unita_carico);return u&&['kg macchina','kg per mano','kg totale'].includes(norm(u.type))&&!/^(non identificato|non specificato|corpo libero)$/i.test(u.equipment.trim());});
+  const unclassified=eligible.filter(r=>readSetEffort(r.origine).tipo_serie==='non_specificata').length;
+  const complete=eligible.length>0&&kg.length===eligible.length&&[...slots.values()].every(g=>g.length===1&&valid.includes(g[0]));
+  const volume=complete&&!mixed&&kg.length?Math.round(kg.reduce((s,r)=>s+Number(r.carico_kg)*Number(r.ripetizioni),0)*100)/100:null;
   const unit=kinds.size===1?[...kinds][0]:'';
-  points.push({date,reps:valid.reduce((s,r)=>s+Number(r.ripetizioni),0),kg:kg.length&&!mixed?Math.max(...kg.map(r=>Number(r.carico_kg))):null,unit,variant:variants.size===1?[...variants][0]:'',sets:valid.length,mixed});
+  points.push({date,reps:eligible.reduce((s,r)=>s+Number(r.ripetizioni),0),kg:kg.length&&!mixed?Math.max(...kg.map(r=>Number(r.carico_kg))):null,unit,variant:variants.size===1?[...variants][0]:'',sets:eligible.length,mixed,volume,identity,comparable,unclassified,complete});
  }
  return {points,conflicts};
 }
