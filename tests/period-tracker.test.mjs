@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildPeriodTracker as build,periodDates} from '../engine/period-tracker.mjs';
+import {buildPeriodTracker as build,periodDates,buildTrainingLevel} from '../engine/period-tracker.mjs';
 import {makePlanRecord} from '../engine/training-plan.mjs';
 const today='2027-06-10',week=['Upper A','Lower A','Cardio H + core','Upper B','Lower B','Cardio Z','Recupero'];
 const programFor=d=>week[(new Date(d+'T12:00:00Z').getUTCDay()+6)%7];
@@ -34,12 +34,15 @@ test('dashboard rendering does not reference the obsolete calorie or radar prope
  const {readFileSync}=await import('node:fs');const {runInNewContext}=await import('node:vm');
  const source=readFileSync(new URL('../experience.js',import.meta.url),'utf8');
  const a=build(args),daily=build({...args,period:'day'});
- const globals={window:{},document:{readyState:'loading',addEventListener(){}},renderDashboard(){},renderProgress(){},renderNutrition(){},render(){},h:String,localDate:()=>today,state:{tables},isDone:()=>false,programFor,targetsFor,n:Number,cfg:()=>0,buildStub:({period})=>period==='day'?daily:a,example:a,dayLabel:d=>d,parseDate:d=>new Date(d+'T12:00:00Z')};
- const injected=source.replace(/\}\)\(\);\s*$/, 'trackerEngine={buildPeriodTracker:buildStub};window.output=[radarCard(example),periodSelector(example),dailyPlanCard(example),cards(example),weekCard(example),muscleSummary(example),ringsCard(example),fullDashboard()];})();');
+ const globals={window:{},document:{readyState:'loading',addEventListener(){}},renderDashboard(){},renderProgress(){},renderNutrition(){},render(){},h:String,localDate:()=>today,state:{tables},isDone:()=>false,programFor,targetsFor,n:Number,cfg:()=>0,buildTrainingLevel,buildStub:({period})=>period==='day'?daily:a,example:a,dayLabel:d=>d,parseDate:d=>new Date(d+'T12:00:00Z')};
+ const injected=source.replace(/\}\)\(\);\s*$/, 'trackerEngine={buildPeriodTracker:buildStub,buildTrainingLevel};window.output=[radarCard(example),periodSelector(example),dailyPlanCard(example),cards(example),weekCard(example),muscleSummary(example),ringsCard(example),fullDashboard()];})();');
  runInNewContext(injected,globals);
  assert.equal(globals.window.output.length,8);
  assert.match(globals.window.output[6],/Anelli di avanzamento obiettivi/);
  assert.match(globals.window.output[7],/fit-dashboard/);
+ assert.match(globals.window.output[7],/class="fit-level"/);
+ assert.match(globals.window.output[7],/Livello CUT30/);
+ assert.match(globals.window.output[7],/10 XP/);
  assert.match(globals.window.output[7],/data-fit-today/);
  assert.match(globals.window.output[0],/Esercizi confermati/);
  assert.match(globals.window.output[1],/aria-pressed="true"[^>]*>Settimana/);

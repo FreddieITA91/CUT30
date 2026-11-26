@@ -61,19 +61,33 @@
   function periodSelector(a){
     return '<section class="cx-card cx-period"><div><span class="cx-kicker">Obiettivi · '+h(a.start)+' / '+h(a.end)+'</span><h2>'+periodLabel(a)+'</h2><p class="cx-disclaimer">Consuntivo fino a oggi · previsto fino a oggi · obiettivo intero periodo</p></div><div class="cx-period-buttons" role="group" aria-label="Periodo">'+[['day','Giorno'],['week','Settimana'],['month','Mese']].map(([v,l])=>'<button type="button" data-cut-period="'+v+'" aria-pressed="'+(a.period===v)+'" class="cx-period-btn '+(a.period===v?'active':'')+'">'+l+'</button>').join('')+'</div></section>';
   }
-  let levelCache=null,cardioEvidence={rows:[],available:false,sheetId:null,at:0};
+  let levelCache=null,levelEngine=null,levelStatus='loading',levelError='',levelFlight=null,cardioEvidence={rows:[],available:false,sheetId:null,at:0};
   window.cut30SetCardioEvidence=(rows,at,sheetId)=>{if(sheetId!==state.prefs?.sheetId||!Array.isArray(rows))return;if(cardioEvidence.sheetId===sheetId&&cardioEvidence.at>at)return;cardioEvidence={rows,at,sheetId,available:true};levelCache=null;};
   const outcomes={improvement:'Miglioramento',maintenance:'Mantenimento',decline:'Calo ripetuto',baseline:'Costanza / riferimento',unknown:'Non valutabile'};
   function makeXp(){
-    if(!trackerEngine?.buildTrainingLevel)return null;
+    const calculate=levelEngine?.buildTrainingLevel||trackerEngine?.buildTrainingLevel;
+    if(typeof calculate!=='function')return null;
     const today=localDate(),start=String(cfg('data_inizio')||'2026-11-02'),sheet=state.prefs?.sheetId,loads=loadEvidence.sheetId===sheet?loadEvidence:{rows:[],available:false},cardio=cardioEvidence.sheetId===sheet?cardioEvidence:{rows:[],available:false};
     const workouts=state.tables.Allenamenti||[];
     const key=JSON.stringify([today,start,sheet,workouts,loads.at||0,cardio.at||0,loads.available,cardio.available]);
     if(levelCache?.key===key)return levelCache.result;
-    const result=trackerEngine.buildTrainingLevel({today,start,workouts,loads:loads.rows,segments:cardio.rows,loadAvailable:loads.available,cardioAvailable:cardio.available});
-    levelCache={key,result};return result;
+    try{const result=calculate({today,start,workouts,loads:loads.rows,segments:cardio.rows,loadAvailable:loads.available,cardioAvailable:cardio.available});
+    levelCache={key,result};levelStatus='ready';levelError='';return result;}catch(err){levelStatus='error';levelError=String(err?.message||err);console.error('CUT30 level calculation:',err);return null;}
   }
   window.cut30LevelForDate=date=>{const xp=makeXp();return xp?{event:xp.events.find(e=>e.date===date)||null,provisional:xp.provisional}:null;};
+  async function loadLevelEngine(retry=false){
+    if(levelFlight)return levelFlight;
+    levelStatus='loading';levelError='';
+    levelFlight=(async()=>{try{const mod=await import('./engine/training-level.mjs?v=3.6.1'+(retry?'&retry='+Date.now():''));
+      if(typeof mod.buildTrainingLevel!=='function')throw Error('Modulo livello non aggiornato');
+      levelEngine=mod;levelCache=null;levelStatus='ready';
+    }catch(err){levelStatus='error';levelError=String(err?.message||err);console.error('CUT30 level module:',err);}
+    finally{levelFlight=null;if(currentPage==='dashboard'||currentPage==='progress'||currentPage==='training')render();}})();
+    return levelFlight;
+  }
+  function levelPlaceholder(){
+    return '<section class="fit-level fit-level-pending" aria-label="Livello CUT30"><div class="fit-level-number"><small>LVL</small><strong>—</strong><span>/100</span></div><div class="fit-level-main"><div class="fit-level-title"><b>Livello CUT30</b></div><small role="status">'+(levelStatus==='error'?'Calcolo non disponibile: '+h(levelError):'Caricamento esperienza…')+'</small>'+(levelStatus==='error'?'<button type="button" class="btn btn-quiet btn-sm" data-level-retry>Riprova</button>':'')+'</div></section>';
+  }
   function signedXp(n){return (n>0?'+':'')+n+' XP';}
   function icon(name){
     const shapes={
@@ -129,7 +143,7 @@
     return '<section class="cx-hero cx-training-hero"><div class="cx-hero-left"><span class="cx-kicker">CUT30 / TRAINING CLUB</span><p class="cx-hero-date">'+h(dayLabel(day,{weekday:"long",day:"numeric",month:"long"}))+'</p><h2>'+h(plan)+'</h2><div class="cx-session-tag '+(done?'is-complete':'')+'">'+(done?'SEDUTA COMPLETATA':'SESSIONE DEL GIORNO')+'</div><div class="cx-hero-buttons"><a class="cx-primary-action" href="#training" data-nav="training">'+icon("barbell")+' '+(done?'Apri sessione':'Apri allenamento')+'</a><button class="cx-ghost-action" data-cut-refresh aria-label="Aggiorna dati">'+icon("refresh")+'</button></div></div><div class="cx-hero-index"><span>ADERENZA</span><strong>'+(score===null?'—':score)+'<small>/100</small></strong><p>'+a.coverage+'/5 indicatori</p>'+track(score||0,100)+'</div></section>';
   }
   function xpBanner(){
-    const xp=makeXp();if(!xp)return '';
+    const xp=makeXp();if(!xp)return levelPlaceholder();
     const last=xp.events.at(-1),status=xp.provisional?'Storico parziale':last?outcomes[last.outcome]:'Nessuna seduta valutata';
     return '<a class="fit-level" href="#progress" data-nav="progress" aria-label="Apri progressione livello CUT30"><div class="fit-level-number"><small>LVL</small><strong>'+xp.level+'</strong><span>/100</span></div><div class="fit-level-main"><div class="fit-level-title"><b>Livello CUT30</b><span>'+tFmt(xp.total)+' XP</span></div>'+track(xp.level===100?1:xp.into,xp.step||1)+'<small>'+(xp.level===100?'Livello massimo':tFmt(xp.remaining)+' XP al prossimo livello')+' · '+status+'</small></div><span class="fit-chevron">›</span></a>';
   }
@@ -196,8 +210,8 @@
   }
   function fullDashboard(){
     const a=aggregates();
-    if(!a)return '<section class="cx-card">Caricamento obiettivi…</section>';
-    return '<div class="cx-page cx-dashboard fit-dashboard">'+ringsCard(a)+xpBanner()+fitStats(a)+fitToday()+weekCard(a)+
+    if(!a)return '<div class="cx-page fit-dashboard">'+xpBanner()+'<section class="cx-card">Caricamento obiettivi…</section></div>';
+    return '<div class="cx-page cx-dashboard fit-dashboard">'+xpBanner()+ringsCard(a)+fitStats(a)+fitToday()+weekCard(a)+
       '<details class="fit-disclosure" open><summary>Copertura muscolare</summary>'+muscleSummary(a)+'</details>'+
       '<details class="fit-disclosure"><summary>Nutrizione</summary>'+periodNutrition(a)+'</details>'+
       '<details class="fit-disclosure fit-analytics"><summary>Analisi e previsioni</summary>'+radarCard(a)+dailyPlanCard(a)+'</details></div>';
@@ -234,7 +248,7 @@
     return '<div class="cx-section-lead"><div><span class="cx-kicker">Diario CUT30</span><h2>Pasti e obiettivi</h2><p>Registra i pasti, confronta i nutrienti e importa le registrazioni aggiunte da ChatGPT.</p></div><button data-cut-refresh class="cx-ghost-action">'+icon("refresh")+' Aggiorna dal cloud</button></div>'+nativeNutrition();
   };
   function xpCard(){
-    const xp=makeXp();if(!xp)return '';
+    const xp=makeXp();if(!xp)return '<section class="cx-card"><h2>Progressione personale</h2><p>Il dettaglio sarà disponibile al termine del caricamento del livello.</p></section>';
     const recent=xp.events.slice(-10).reverse();
     return '<section class="cx-card fit-level-detail"><div class="cx-head"><div><h2>Progressione personale</h2><span class="fit-caption">Livello '+xp.level+' / 100 · '+xp.total+' XP</span></div></div>'+
      (xp.provisional?'<p class="ms-warning">Dati parziali: il livello può variare quando si caricano Carichi e segmenti cardio.</p><button type="button" class="btn btn-quiet" data-cut-refresh>↻ Aggiorna storico</button>':'')+
@@ -290,6 +304,7 @@
   }
   function startup(){
     document.addEventListener("click",e=>{
+      const levelRetry=e.target.closest('[data-level-retry]');if(levelRetry){e.preventDefault();levelCache=null;loadLevelEngine(true);render();return;}
       const muscleBtn=e.target.closest("[data-muscle-refresh]");if(muscleBtn){e.preventDefault();e.stopImmediatePropagation();loadMuscleHistory({interactive:true,force:true});return;}
       const todayLink=e.target.closest("[data-fit-today]");if(todayLink)selectedDate=localDate();
       const selector=e.target.closest("[data-cut-period]");
@@ -302,7 +317,8 @@
     window.setTimeout(()=>{refreshCloud(true);loadMuscleHistory({force:true});},650);
     window.setInterval(()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>300000)refreshCloud(true);loadMuscleHistory();}},60000);
     document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>120000)refreshCloud(true);loadMuscleHistory();}});
-    import("./engine/period-tracker.mjs").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
+    loadLevelEngine();
+    import("./engine/period-tracker.mjs?v=3.6.1").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
     render();
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",startup,{once:true});else startup();
