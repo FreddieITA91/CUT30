@@ -24,7 +24,7 @@ const secondary={
  'lb-press':['Posteriori'],'lb-hip':['Core'],'lb-core':[]
 };
 const names=e=>[e.id,e.name,...String(e.name).split('/'),...(aliases[e.id]||[])].map(norm);
-function resolve(name,items){const key=norm(name);if(!key)return null;const hits=items.filter(e=>names(e).includes(key));return hits.length===1?hits[0]:null;}
+export function resolveExercise(name,items){const key=norm(name);if(!key)return null;const hits=items.filter(e=>names(e).includes(key));return hits.length===1?hits[0]:null;}
 const isMetric=e=>GROUPS.includes(e.muscle);
 const validSeries=r=>r.numero_serie!==null&&r.numero_serie!==''&&Number.isInteger(Number(r.numero_serie))&&Number(r.numero_serie)>0&&r.ripetizioni!==null&&r.ripetizioni!==''&&Number.isInteger(Number(r.ripetizioni))&&Number(r.ripetizioni)>0;
 const signature=r=>JSON.stringify([norm(r.esercizio),norm(r.unita_carico),String(r.carico_kg??''),Number(r.ripetizioni),readSetEffort(r.origine).tipo_serie]);
@@ -33,11 +33,11 @@ export function buildMuscleCoverage(daily,loads=[],{available=false}={}){
  const days=new Map(daily.map(d=>[d.date,d])),records=byIdLatest(loads).filter(r=>days.get(r.data)?.active);
  let unmatched=0,invalid=0,warmups=0,conflicts=0;
  const ledger=new Map(),covered=new Set();
- for(const d of daily)for(const e of d.exercises){if(!isMetric(e))continue;const g=groups[e.muscle];g.planned+=e.sets;if(d.active){g.expected+=e.sets;if(d.checkedIds.some(x=>resolve(x,d.exercises)?.id===e.id)){g.checkedProxy+=e.sets;g.checkedExercises++;}}}
+ for(const d of daily)for(const e of d.exercises){if(!isMetric(e))continue;const g=groups[e.muscle];g.planned+=e.sets;if(d.active){g.expected+=e.sets;if(d.checkedIds.some(x=>resolveExercise(x,d.exercises)?.id===e.id)){g.checkedProxy+=e.sets;g.checkedExercises++;}}}
  for(const r of records){
    const d=days.get(r.data),program=r.programma||d.actualProgram||d.program;
    const list=program===d.program?d.exercises:(WORKOUTS[program]||[]);
-   const e=resolve(r.esercizio,list.filter(isMetric));
+   const e=resolveExercise(r.esercizio,list.filter(isMetric));
    if(!e){unmatched++;continue;}if(!validSeries(r)){invalid++;continue;}
    const type=readSetEffort(r.origine).tipo_serie;
    if(type==='riscaldamento'){warmups++;continue;}
@@ -57,7 +57,7 @@ export function buildMuscleCoverage(daily,loads=[],{available=false}={}){
    // A completed session without exercise-level evidence is not an observed zero.
    for(const e of d.exercises){if(!isMetric(e))continue;
      const observed=covered.has(JSON.stringify([d.date,e.id]));
-     if(!available||((d.actual.done||d.checkedIds.some(x=>resolve(x,d.exercises)?.id===e.id))&&!observed))groups[e.muscle].missing++;
+     if(!available||((d.actual.done||d.checkedIds.some(x=>resolveExercise(x,d.exercises)?.id===e.id))&&!observed))groups[e.muscle].missing++;
    }
  }
  for(const g of Object.values(groups)){

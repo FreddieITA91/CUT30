@@ -184,13 +184,33 @@
       (evidence.unmatched||evidence.invalid||evidence.conflicts?'<p class="ms-warning">Da riconciliare: '+evidence.unmatched+' record non associati, '+evidence.invalid+' non validi, '+evidence.conflicts+' conflitti. Nessuna serie inventata.</p>':'')+
       (source.status==='error'||source.status==='disconnected'?'<p class="ms-warning" role="status">'+h(source.error)+(evidence.available?' · Ultimo dato disponibile conservato.':'')+'</p>':'')+(!evidence.available&&source.status!=='loading'?'<button class="btn btn-quiet" type="button" data-muscle-refresh>'+(source.status==='disconnected'?'Collega Google':'Riprova caricamento')+'</button>':'')+'</section>';
   }
+  function ringsCard(a){
+    const rings=a.rings||[],colors=['#ff416d','#b8f34b','#40d8e8'];
+    const selection=[['day','Giorno'],['week','Settimana'],['month','Mese']].map(([v,l])=>'<button type="button" data-cut-period="'+v+'" aria-pressed="'+(a.period===v)+'" class="fit-period '+(a.period===v?'active':'')+'">'+l+'</button>').join('');
+    const art=rings.map((r,i)=>{const rad=63-i*17,c=2*Math.PI*rad,p=r.progress??0;return '<circle cx="78" cy="78" r="'+rad+'" fill="none" stroke="'+colors[i]+'" stroke-opacity=".16" stroke-width="12"/>'+
+      (p>0?'<circle cx="78" cy="78" r="'+rad+'" fill="none" stroke="'+colors[i]+'" stroke-width="12" stroke-linecap="round" stroke-dasharray="'+(c*p/100)+' '+c+'" transform="rotate(-90 78 78)"/>':'');}).join('');
+    const achieved=rings.filter(r=>!r.partial&&r.percent!==null&&r.percent>=100).length,eligible=rings.filter(r=>r.target>0).length;
+    const labels=rings.map((r,i)=>'<div class="fit-ring-label"><span>'+h(r.label)+'</span><strong style="color:'+colors[i]+'">'+display(r.actual)+'<small> / '+(r.target===0?'—':display(r.target))+(r.unit?' '+r.unit:'')+'</small></strong><small class="fit-ring-note">'+(r.partial?'Dati parziali'+(r.percent===null?'':' · '+r.percent+'%'):r.target===0?'Non previsto':r.target===null?'Target non disponibile':r.percent===null?'Dato mancante':r.percent+'%')+'</small></div>').join('');
+    return '<section class="fit-activity"><div class="fit-heading"><h2>Attività</h2><span>'+h(periodLabel(a))+'</span></div><div class="fit-periods" role="group" aria-label="Periodo">'+selection+'</div>'+
+      '<div class="fit-rings-layout"><div class="fit-ring-art"><svg viewBox="0 0 156 156" role="img" aria-label="Anelli di avanzamento obiettivi">'+art+'<text x="78" y="76" text-anchor="middle" class="fit-ring-center">'+achieved+'/'+eligible+'</text><text x="78" y="89" text-anchor="middle" class="fit-ring-caption">obiettivi</text></svg></div><div class="fit-ring-labels">'+labels+'</div></div>'+
+      '<p class="fit-caption">Registrato fino a oggi / obiettivo intero periodo. '+(rings[2]?.id==='cardio'?'Cardio mostrato perché mancano i passi. ':'')+'Le kcal attive sono stime, non un traguardo da inseguire.</p></section>';
+  }
+  function fitStats(a){
+    const sets=Object.values(a.muscles).reduce((s,g)=>s+g.recorded,0);
+    const items=[['fire','Calorie attive',display(a.calories.actual),'kcal',a.calories.partial?'Dati parziali':'Registrate'],['pulse','Cardio',display(a.metrics.cardio.actual),'min','Obiettivo '+display(a.metrics.cardio.full)+' min'],['barbell','Serie',a.muscleEvidence.available?display(sets):'—','','Registrate, escl. riscaldamento'],['calendar','Sedute',display(a.metrics.sessions.actual),' / '+display(a.metrics.sessions.full),'Completate']];
+    return '<div class="fit-stats">'+items.map(([i,l,v,u,note])=>'<section class="fit-stat"><div class="fit-stat-label">'+icon(i)+'<span>'+l+'</span></div><strong>'+v+'<small>'+u+'</small></strong><span class="fit-caption">'+note+'</span></section>').join('')+'</div>';
+  }
+  function fitToday(){
+    const day=localDate(),done=isDone(day),plan=programFor(day);
+    return '<a class="fit-workout" href="#training" data-nav="training" data-fit-today><div class="fit-workout-icon">'+icon("barbell")+'</div><div><span class="fit-caption">'+h(dayLabel(day,{weekday:"long",day:"numeric",month:"long"}))+'</span><h2>'+h(plan)+'</h2><span class="fit-caption">'+(done?'Seduta completata':plan==='Recupero'?'Recupero programmato':'Allenamento di oggi')+'</span></div><span class="fit-chevron">›</span></a>';
+  }
   function fullDashboard(){
-    const a=aggregates(),xp=makeXp();
+    const a=aggregates();
     if(!a)return '<section class="cx-card">Caricamento obiettivi…</section>';
-    return '<div class="cx-page cx-dashboard">'+hero(a,xp)+periodSelector(a)+cards(a)+
-      '<div class="cx-main-grid cx-training-grid">'+muscleSummary(a)+weekCard(a)+'</div>'+
-      '<div class="cx-main-grid">'+periodNutrition(a)+radarCard(a)+'</div>'+
-      '<details class="cx-card cx-report-details"><summary>Dettaglio giornaliero e previsioni</summary>'+dailyPlanCard(a)+'</details></div>';
+    return '<div class="cx-page cx-dashboard fit-dashboard">'+ringsCard(a)+fitStats(a)+fitToday()+weekCard(a)+
+      '<details class="fit-disclosure" open><summary>Copertura muscolare</summary>'+muscleSummary(a)+'</details>'+
+      '<details class="fit-disclosure"><summary>Nutrizione</summary>'+periodNutrition(a)+'</details>'+
+      '<details class="fit-disclosure"><summary>Analisi e previsioni</summary>'+radarCard(a)+dailyPlanCard(a)+'</details></div>';
   }
   function anatomySvg(groups,small=false){
     const val=g=>groups[g]?.displayPercent??null;
@@ -282,6 +302,7 @@
   function startup(){
     document.addEventListener("click",e=>{
       const muscleBtn=e.target.closest("[data-muscle-refresh]");if(muscleBtn){e.preventDefault();e.stopImmediatePropagation();loadMuscleHistory({interactive:true,force:true});return;}
+      const todayLink=e.target.closest("[data-fit-today]");if(todayLink)selectedDate=localDate();
       const selector=e.target.closest("[data-cut-period]");
       if(selector){e.preventDefault();selectedPeriod=selector.dataset.cutPeriod;render();return;}
       const btn=e.target.closest("[data-cut-refresh]");

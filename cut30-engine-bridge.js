@@ -284,8 +284,14 @@
       toast('Audit privato archiviato e verificato');
     }finally{auditSaving=false;}
   }
-  let logEngine, guideUrl=null;
-  const logDrafts=new Map(), logOpen=new Set();
+  let logEngine, flowEngine, muscleEngine, guideUrl=null;
+  const logDrafts=new Map(), logOpen=new Map(), sessionDrafts=new Map(), openManual=new Set();
+  const logItems=(items=logExercises())=>items.map(ex=>({id:ex.id,done:exerciseDone(ex,items)}));
+  function exerciseDone(ex,items=logExercises()){return checkedExercise(ex,selectedDate,items)||logEngine.workingCount(ex,setRows(ex),engine.readSetEffort)>=ex.sets;}
+  function setOpen(date,id){logOpen.set(date,id);}
+  function currentOpen(items){if(!logOpen.has(selectedDate))setOpen(selectedDate,flowEngine.initialOpen(logItems(items)));else if(items&&!openManual.has(selectedDate)&&logOpen.get(selectedDate)!==null){const rows=logItems(items);if(rows.find(x=>x.id===logOpen.get(selectedDate))?.done||!rows.some(x=>x.id===logOpen.get(selectedDate)))setOpen(selectedDate,flowEngine.initialOpen(rows));}return logOpen.get(selectedDate);}
+  function advanceOpen(date,id,items){if(logOpen.get(date)!==id)return false;openManual.delete(date);setOpen(date,flowEngine.nextOpen(items,id,id));return true;}
+  function revealNext(date){if(currentPage!=='training'||selectedDate!==date)return;const id=logOpen.get(date);const target=id?document.querySelector('[data-wl-row="'+id+'"]'):document.querySelector('.wl-session-end');target?.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
   const logKey=(date,id)=>date+'|'+id;
   function logPlan(){
     try{const saved=cache.SchedeConfermate.find(x=>x.data===selectedDate);
@@ -294,24 +300,27 @@
   }
   function logExercises(){const p=logPlan();return p?.exercises||WORKOUTS[programFor(selectedDate)]||[];}
   function setRows(ex){return logEngine.matching(ex,cache.Carichi.filter(x=>x.data===selectedDate));}
-  function checkedExercise(ex,date=selectedDate){return state.tables.Esercizi.some(x=>x.data===date&&x.esercizio===ex.id&&String(x.completato).toLowerCase()==='true');}
+  function checkedExercise(ex,date=selectedDate,items=logExercises()){const matches=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===programFor(date)&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id).sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));return String(matches[0]?.completato).toLowerCase()==='true';}
   const selectOptions=(values,selected)=>values.map(v=>'<option value="'+h(v)+'" '+(String(v)===String(selected)?'selected':'')+'>'+h(v)+'</option>').join('');
-  function exerciseRow(ex,index){
-    const rows=setRows(ex),past=logEngine.latestSession(ex,cache.Carichi,selectedDate);
-    const count=logEngine.workingCount(ex,rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
+  function exerciseRow(ex,index,items){
+    const rows=setRows(ex),historical=cache.Carichi.filter(x=>x.data<selectedDate&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id),lastDay=historical.map(x=>x.data).sort().at(-1),past=historical.filter(x=>x.data===lastDay).sort((a,b)=>Number(a.numero_serie)-Number(b.numero_serie));
+    const count=logEngine.workingCount(ex,rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex,selectedDate,items),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
     const names=logEngine.namesFor(ex),key=logKey(selectedDate,ex.id),draft=logDrafts.get(key)||{},last=past.filter(x=>logEngine.unitParts(x.unita_carico)).at(-1),unit=logEngine.unitParts(last?.unita_carico),variant=draft.esercizio||names.find(v=>logEngine.norm(v)===logEngine.norm(last?.esercizio))||names[0],guide=logEngine.guideFor(ex,variant);
     const next=logEngine.nextSet(ex,rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadedAt||future;
     const val=(k,fallback='')=>h(draft[k]??fallback);
     const history=past.length?'<span class="wl-history-date">'+h(past[0].data)+'</span> '+past.map(r=>'<span class="wl-hist" title="'+h(r.unita_carico)+'">'+h(r.esercizio)+' · S'+h(r.numero_serie)+' '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'<small>'+h(r.unita_carico||'Unità non identificata')+'</small></span>').join(' '):loadedAt?'Nessuna serie precedente':'Storico da caricare';
     const refs=(ex.references||[]).map(r=>'<span class="wl-ref">'+h(r.exercise)+' · '+h(r.unit)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+': '+h(r.reference_kg??'—')+' kg × '+h(r.reference_reps??'—')+(r.conditional_target_reps==null?'':' → '+h(r.conditional_target_reps)+' reps')+'<small>'+h(r.load_increase_allowed?'Incremento minimo solo se tecnica e recupero adeguati.':r.note||'')+'</small></span>').join('');
+    const compactLast=past.at(-1),compact=compactLast?h(compactLast.carico_kg)+' kg × '+h(compactLast.ripetizioni):'Nessun dato';
+    const opened=currentOpen()===ex.id;
     const image=guide?'<img class="wl-photo" src="'+h(guide.frames[0])+'" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">':'';
     const setList=rows.map(r=>'<button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||future?'disabled':'')+'>S'+h(r.numero_serie)+' · '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+' <small>'+h(engine.readSetEffort(r.origine).tipo_serie)+'</small></button>').join('');
-    return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-ex-head"><div class="wl-number">'+String(index+1).padStart(2,'0')+'</div><div class="wl-thumb">'+image+'</div><div class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.muscle)+' · recupero '+h(ex.rest)+'</small></div><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button><div class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Verificate':manual?'Spunta manuale':rows.length?'In corso':'Da fare')+'</small></div></div>'+
+    return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+'</small><small>Ultimo: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
+      '<div class="wl-expand" '+(opened?'':'hidden')+'>'+
       '<div class="wl-comparison"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div><div><span>ULTIMA REGISTRAZIONE</span><div class="wl-history">'+history+'</div></div></div>'+
       '<div class="wl-meter" aria-label="Serie allenanti verificate">'+Array.from({length:ex.sets},(_,i)=>'<i class="'+(i<count?'filled':'')+'"></i>').join('')+'</div>'+
       (setList?'<div class="wl-set-list">'+setList+'</div>':'')+
       (timed?'<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future?'disabled':'')+'> Conferma attività svolta (tempo nel diario seduta)</label>':
-      '<details class="wl-entry" data-wl-details="'+h(key)+'" '+(logOpen.has(key)?'open':'')+'><summary>'+ (complete?'Modifica / aggiungi serie':'Registra serie')+' <span>＋</span></summary>'+
+      '<div class="wl-entry">'+
       '<form class="wl-set-form" data-wl-form="'+h(ex.id)+'" data-wl-date="'+h(selectedDate)+'" '+(draft.editId?'data-edit-id="'+h(draft.editId)+'"':'')+'><div class="wl-fields">'+
       '<label>Variante<select name="esercizio">'+selectOptions(names,variant)+'</select></label>'+
       '<label>Serie<input name="serie" type="number" min="1" max="25" value="'+val('serie',next??'')+'" required></label>'+
@@ -323,15 +332,27 @@
       '<label>Tipo serie<select name="tipo_serie">'+selectOptions(['allenante','riscaldamento','non_specificata'],draft.tipo_serie||'allenante')+'</select></label></div>'+
       '<div class="wl-fields wl-effort"><label>RIR<input name="rir" type="number" min="0" max="10" value="'+val('rir')+'" placeholder="—"></label><label>RPE<input name="rpe" type="number" min="1" max="10" step="0.5" value="'+val('rpe')+'" placeholder="—"></label></div>'+
       '<div class="wl-actions">'+(last?'<button class="btn btn-quiet" type="button" data-wl-copy="'+h(ex.id)+'">Usa ultima serie</button>':'')+'<button class="btn" type="submit" '+(disabled?'disabled':'')+'>Salva serie</button></div>'+
-      '<p class="tiny muted">'+(future?'Non puoi registrare una prestazione futura.':disabled?'Connetti Google e aggiorna lo storico prima di registrare.':'I valori sono registrati soltanto dopo il salvataggio verificato.')+'</p></form></details>'+
-      '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+'</article>';
+      '<p class="tiny muted">'+(future?'Non puoi registrare una prestazione futura.':disabled?'Connetti Google e aggiorna lo storico prima di registrare.':'I valori sono registrati soltanto dopo il salvataggio verificato.')+'</p></form></div>'+
+      '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+'</div></article>';
   }
   function trainingPanel(){
-    const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>checkedExercise(x)||logEngine.workingCount(x,setRows(x),engine.readSetEffort)>=x.sets).length;
+    const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>exerciseDone(x,ex)).length;currentOpen(ex);
     return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
       '<div class="progress wl-session-progress"><span style="width:'+(ex.length?done/ex.length*100:0)+'%"></span></div><div class="wl-toolbar"><span>Serie verificate · storico privato</span><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
       '<details class="wl-plan"><summary>Obiettivi, conferma scheda e audit</summary>'+planPanel(suggest)+auditPanel()+'</details>'+
-      '<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div><button class="btn wl-finish" data-action="finish-training" '+(selectedDate>localDate()?'disabled':'')+'>'+(isDone(selectedDate)?'Aggiorna sessione':'Concludi allenamento')+'</button></section>';
+      '<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+sessionSummary(ex,done)+'</section>';
+  }
+  function sessionSummary(ex,done){
+    const closed=isDone(selectedDate),ready=ex.length>0&&done===ex.length;
+    const metrics=flowEngine.sessionMetrics(trainingFor(selectedDate));
+    const registered=ex.reduce((s,x)=>s+logEngine.workingCount(x,setRows(x),engine.readSetEffort),0);
+    const value=(v,unit)=>v===null?'—':h(fmtN(v,1))+unit;
+    const title=closed?'Allenamento concluso':ready?'Esercizi completati':'Riepilogo della seduta';
+    return '<section class="wl-session-end '+(closed||ready?'wl-ready':'')+'"><h3>'+title+'</h3><p>'+(closed?'Seduta confermata nel diario.':ready?'Registra i dati effettivi della seduta e conferma la conclusione.':'Riepilogo delle registrazioni effettuate.')+'</p>'+
+      '<div class="wl-end-grid"><div><small>Esercizi</small><b>'+done+'/'+ex.length+'</b></div><div><small>Serie allenanti verificate</small><b>'+(loadedAt?registered:'—')+'</b></div><div><small>Tempo registrato</small><b>'+value(metrics.minutes,' min')+(metrics.partialMinutes&&metrics.minutes!==null?'*':'')+'</b></div><div><small>Cardio</small><b>'+value(metrics.cardio,' min')+'</b></div><div><small>Calorie attive</small><b>'+value(metrics.kcal,' kcal')+'</b></div></div>'+
+      (metrics.partialMinutes&&metrics.minutes!==null?'<p>* Durate parziali.</p>':'')+
+      '<button type="button" class="btn btn-quiet wl-session-data" data-wl-session-data>Apri dati della seduta</button>'+
+      '<button type="button" class="btn wl-finish" data-action="finish-training" '+(selectedDate>localDate()?'disabled':'')+'>'+(closed?'Aggiorna sessione':'Concludi allenamento')+'</button></section>';
   }
   function closeGuide(){const d=document.querySelector('#wl-guide');if(d)d.close();if(guideUrl){URL.revokeObjectURL(guideUrl);guideUrl=null;}d?.remove();}
   function openGuide(ex){
@@ -351,7 +372,7 @@
     if(edit)values.serie=rec.numero_serie;
     for(const [k,v] of Object.entries(values))if(form.elements[k])form.elements[k].value=v;
     if(edit)form.dataset.editId=rec.id;else delete form.dataset.editId;
-    row.querySelector('details').open=true;captureLog(form);form.elements.kg.focus();
+    openManual.add(selectedDate);setOpen(selectedDate,ex.id);captureLog(form);render();document.querySelector('[data-wl-form="'+ex.id+'"] [name="kg"]')?.focus();
   }
   function ingredientRow(){
     return '<div class="cut30-ingredient-row form-row" style="margin:8px 0">'+
@@ -380,7 +401,7 @@
     if(!document.querySelector('#app') || !engine)return;
     const root=document.querySelector('#app');
     if(currentPage==='progress')root.insertAdjacentHTML('afterbegin',summary()+latestLoads());
-    if(currentPage==='training'){const old=root.querySelector('.training-list')?.closest('.panel');if(old)old.outerHTML=trainingPanel();else root.insertAdjacentHTML('afterbegin',trainingPanel());root.insertAdjacentHTML('beforeend',segmentPanel());}
+    if(currentPage==='training'){const old=root.querySelector('.training-list')?.closest('.panel');if(old)old.outerHTML=trainingPanel();else root.insertAdjacentHTML('afterbegin',trainingPanel());root.insertAdjacentHTML('beforeend',segmentPanel());const sf=root.querySelector('#training-form'),draft=sessionDrafts.get(selectedDate);if(sf&&draft)for(const [k,v] of Object.entries(draft))if(sf.elements[k])sf.elements[k].value=v;}
     if(currentPage==='nutrition')root.insertAdjacentHTML('afterbegin',recipePanel());
   }
   function slug(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'esercizio';}
@@ -428,7 +449,7 @@
     const gym=String(data.get('palestra')),eq=String(data.get('attrezzo')||'').trim(),type=String(data.get('unita'));
     if(!eq||!['A','B'].includes(gym)||!['kg macchina','kg per mano','kg totale'].includes(type))throw Error('Indica palestra, attrezzo e unità.');
     const unit=type+' | palestra '+gym+' | attrezzo '+eq;
-    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort);
+    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort),wasDone=exerciseDone(ex);
     const canonical='s-'+date.replaceAll('-','')+'-'+slug(exercise)+'-'+slug(gym+'-'+eq)+'-'+number;
     const existing=cache.Carichi.find(x=>x.id===form.dataset.editId);
     if(existing&&(existing.data!==date||logEngine.norm(existing.esercizio)!==logEngine.norm(exercise)||Number(existing.numero_serie)!==number||existing.unita_carico!==unit))throw Error('Per correggere una serie mantieni variante, palestra, attrezzo e numero originali.');
@@ -444,8 +465,8 @@
       window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),state.prefs.sheetId);
       const after=logEngine.workingCount(ex,logEngine.matching(ex,cache.Carichi.filter(x=>x.data===date)),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
-      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});logOpen.add(key);
-      toast('Serie salvata e verificata sul Google Sheet privato');render();await refreshCloud(true);
+      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
+      toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));await refreshCloud(true);
     }finally{setSaving=false;}
   }
   function computeRecipe(form){
@@ -496,6 +517,7 @@
     Promise.resolve(task).catch(err=>{toast('CUT30 Engine: '+err.message);console.error('CUT30 Engine input:',err.message);}).finally(()=>{form.dataset.pending='0';});
   }
   function onInput(e){
+    const session=e.target.closest('#training-form');if(session){sessionDrafts.set(selectedDate,Object.fromEntries(new FormData(session)));return;}
     const log=e.target.closest('.wl-set-form');if(log){captureLog(log);return;}
     const form=e.target.closest('#cut30-recipe-form');
     if(!form)return;
@@ -507,6 +529,8 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    const toggle=e.target.closest('[data-wl-toggle]');if(toggle){openManual.add(selectedDate);setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}
+    if(e.target.closest('[data-wl-session-data]')){document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
     const edit=e.target.closest('[data-wl-edit]');if(edit){const ex=logExercises().find(x=>x.id===edit.dataset.wlId);if(ex)fillLog(ex,cache.Carichi.find(x=>x.id===edit.dataset.wlEdit),true);return;}
@@ -533,14 +557,15 @@
   async function init(){
     try{
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
-      logEngine=await import('./engine/workout-log.mjs');
+      [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);
       document.addEventListener('click',onClick);
       document.addEventListener('input',onInput);
       document.addEventListener('change',onInput);
-      document.addEventListener('toggle',e=>{const key=e.target.dataset?.wlDetails;if(key){if(e.target.open)logOpen.add(key);else logOpen.delete(key);}},true);
+      document.addEventListener('change',e=>{const id=e.target.dataset?.exercise;if(id&&currentPage==='training'&&e.target.checked){const date=selectedDate,items=logItems().map(x=>x.id===id?{...x,done:true}:x);if(advanceOpen(date,id,items))requestAnimationFrame(()=>revealNext(date));}},true);
+      document.addEventListener('submit',e=>{if(e.target.id==='training-form'&&selectedDate<=localDate()&&e.target.checkValidity())sessionDrafts.delete(selectedDate);},true);
       render();
       setTimeout(()=>refreshCloud(true),1000);
       setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&Date.now()-loadedAt>300000)refreshCloud(true);},90000);

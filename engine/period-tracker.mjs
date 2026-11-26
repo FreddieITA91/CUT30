@@ -2,6 +2,7 @@ import {suggestTrainingDraft,byIdLatest} from './cut30.mjs';
 import {readPlanRecord} from './training-plan.mjs';
 import {WORKOUTS} from './workout-catalog.mjs';
 import {buildMuscleCoverage} from './muscle-coverage.mjs';
+import {activityRings} from './fitness-p0.mjs';
 const num=v=>v==null||String(v).trim()===''?null:Number.isFinite(Number(v))&&Number(v)>=0?Number(v):null;
 const round=v=>Math.round(v*10)/10;
 const sum=a=>a.reduce((s,x)=>s+x,0);
@@ -86,8 +87,9 @@ export function buildPeriodTracker({today,period='week',tables={},confirmedPlans
  const scores=Object.values(metrics).map(m=>m.score).filter(x=>x!==null);
  const nutrition=Object.fromEntries(keys.map(k=>[k,{actual:measured(past.map(x=>x.nutritionActual),k),
     expected:complete(past,x=>num(x.nutrition[k])),full:complete(daily,x=>num(x.nutrition[k]))}]));
- return {period,today,muscles,muscleEvidence,start:dates[0],end:dates.at(-1),daily,elapsedDays:past.length,metrics,index:scores.length?Math.round(sum(scores)/scores.length):null,coverage:scores.length,
+ const result={period,today,muscles,muscleEvidence,start:dates[0],end:dates.at(-1),daily,elapsedDays:past.length,metrics,index:scores.length?Math.round(sum(scores)/scores.length):null,coverage:scores.length,
    cardioPlanned:total(daily,x=>x.cardio),cardioPlannedToDate:cardioExpected,cardioGap:cardioGoal===null?null:round(cardioGoal-total(daily,x=>x.cardio)),
    calories:{actual:calorieActual,forecast:complete(daily,x=>x.calorieForecast),forecastToDate:complete(past,x=>x.calorieForecast),recordedSessions:knownKcal.length,partial:past.some(x=>x.hasWorkout&&x.actual.kcal===null)},
    nutrition,nutritionDays:past.filter(x=>x.nutritionLogged).length,stepDays:knownSteps.length};
+ result.rings=activityRings(result);return result;
 }
