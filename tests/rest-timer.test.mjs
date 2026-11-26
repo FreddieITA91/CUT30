@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {recoverySeconds,shouldStartRecovery,startRecovery,remainingSeconds,extendRecovery,formatRecovery} from '../engine/rest-timer.mjs';
+import {WORKOUTS} from '../engine/workout-catalog.mjs';
+const bench=WORKOUTS['Upper B'].find(e=>e.id==='ub-dbpress');
+test('uses exercise prescription; upper end of range; no artificial duration for cardio',()=>{assert.equal(recoverySeconds(bench),120);assert.equal(recoverySeconds({rest:'90–120 sec'}),120);assert.equal(recoverySeconds({rest:'45–60 sec'}),60);assert.equal(recoverySeconds({rest:'2 min'}),120);assert.equal(recoverySeconds({rest:'Ritmo costante'}),null);assert.equal(recoverySeconds({rest:'120–90 sec'}),null);});
+test('only today verified new set with further exercise starts recovery',()=>{const a={date:'2026-11-26',today:'2026-11-26',verified:true,editing:false,hasNext:true,exercise:bench};assert.equal(shouldStartRecovery(a),true);for(const x of [{editing:true},{verified:false},{hasNext:false},{date:'2026-11-25'}])assert.equal(shouldStartRecovery({...a,...x}),false);});
+test('absolute deadline resists background throttling and extension works after expiry',()=>{const t=startRecovery({exercise:bench,date:'2026-11-26',recordId:'s1',now:1000});assert.equal(t.deadline,121000);assert.equal(remainingSeconds(t,1600),120);assert.equal(remainingSeconds(t,50000),71);assert.equal(remainingSeconds(t,999999),0);assert.equal(remainingSeconds(extendRecovery(t,130000),130000),30);assert.equal(remainingSeconds(extendRecovery(t,1000),1000),150);assert.equal(formatRecovery(71),'1:11');});
