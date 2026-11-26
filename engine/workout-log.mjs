@@ -95,3 +95,34 @@ export function nextSessionSet(rows){
  for(let i=1;i<=25;i++)if(!occupied.has(i))return i;
  return null;
 }
+
+// Actual recorded sets only. Each point is one dated exercise session; no synthetic zeros.
+export function exerciseTrend(ex,rows,through,program,items){
+ const days=new Map(),validDate=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d+'T12:00:00Z'));
+ for(const r of rows){
+  if(!r?.id||!validDate(r.data)||r.data>through||r.programma!==program||resolveExercise(r.esercizio,items)?.id!==ex.id)continue;
+  const n=Number(r.numero_serie);if(!Number.isInteger(n)||n<1)continue;
+  if(!days.has(r.data))days.set(r.data,new Map());
+  const slots=days.get(r.data);if(!slots.has(n))slots.set(n,[]);slots.get(n).push(r);
+ }
+ let conflicts=0;
+ const points=[];
+ for(const [date,slots] of [...days.entries()].sort(([a],[b])=>a.localeCompare(b))){
+  const valid=[];
+  for(const group of slots.values()){
+   if(group.length!==1){conflicts++;continue;}
+   const r=group[0],reps=Number(r.ripetizioni);
+   if(r.ripetizioni===''||r.ripetizioni==null||!Number.isInteger(reps)||reps<1)continue;
+   valid.push(r);
+  }
+  if(!valid.length)continue;
+  const kg=valid.filter(r=>r.carico_kg!==''&&r.carico_kg!=null&&Number.isFinite(Number(r.carico_kg))&&Number(r.carico_kg)>=0);
+  const kinds=new Set(kg.map(r=>norm(unitParts(r.unita_carico)?.type||r.unita_carico||'non specificato')));
+  const variants=new Set(kg.map(r=>norm(r.esercizio)));
+  // Mixed units/variants must not be silently aggregated as one maximum.
+  const mixed=kinds.size>1||variants.size>1;
+  const unit=kinds.size===1?[...kinds][0]:'';
+  points.push({date,reps:valid.reduce((s,r)=>s+Number(r.ripetizioni),0),kg:kg.length&&!mixed?Math.max(...kg.map(r=>Number(r.carico_kg))):null,unit,variant:variants.size===1?[...variants][0]:'',sets:valid.length,mixed});
+ }
+ return {points,conflicts};
+}

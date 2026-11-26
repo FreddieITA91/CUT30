@@ -139,7 +139,7 @@
     const next=Math.max(0,...s.rows.map(r=>r.numero_segmento))+1;
     const field=(label,name,step='1')=>'<div class="field"><label>'+label+'</label><input name="'+name+'" type="number" step="'+step+'" min="0"></div>';
     const metric=(value,suffix,complete=true)=>value===null?'—':fmtN(value,2)+suffix+(complete?'':' (parziale)');
-    return '<section class="panel"><div class="panel-head"><div><h2 class="section-title">Cardio · segmenti</h2><p class="section-subtitle">Dettaglio per attività, separato dal totale del diario</p></div><button class="btn btn-quiet btn-sm" type="button" data-cut30-refresh>↻ Aggiorna</button></div>'+
+    return '<section class="wl-cardio-log">'+
       (!cardioLoaded?'<p class="sm muted">Dettaglio cloud non caricato.</p>':'<p class="sm">Totale segmenti: '+s.minutes+' min · '+metric(s.distance.value,' km',s.distance.complete)+' · '+metric(s.kcal.value,' kcal',s.kcal.complete)+' · FC media '+metric(s.hr_mean,' bpm',s.hr_coverage_minutes===s.minutes)+' (ponderata) · FC max '+metric(s.hr_max,' bpm',s.hr_max_complete)+'</p>')+
       s.rows.map(r=>'<div class="entry"><div class="entry-main"><strong>#'+r.numero_segmento+' '+h(r.modalita)+' · '+r.durata_min+' min</strong><small>'+metric(r.distanza_km,' km')+' · '+metric(r.kcal_attive,' kcal')+' · FC '+metric(r.fc_media,'')+'/'+metric(r.fc_max,' bpm')+(r.passo_sec_100m===null?'':' · '+Math.floor(r.passo_sec_100m/60)+':'+String(r.passo_sec_100m%60).padStart(2,'0')+'/100 m')+'</small></div></div>').join('')+
       '<form id="cut30-cardio-form" class="stack"><div class="form-row"><div class="field"><label>Numero segmento</label><input name="numero_segmento" type="number" min="1" max="99" value="'+next+'" required></div><div class="field"><label>Attività</label><select name="modalita">'+cardioEngine.MODES.map(m=>'<option>'+h(m)+'</option>').join('')+'</select></div>'+
@@ -172,7 +172,7 @@
     const after=(await googleApi(read)).values||[];
     const saved=after.filter((r,i)=>i>0&&r[0]===rec.id);
     if(saved.length!==1||head.some((k,i)=>String(saved[0][i]??'')!==String(rec[k]??'')))throw new Error('Verifica scrittura non riuscita; aggiorna prima di riprovare');
-    await loadCardio();render();toast('Segmento cardio salvato e verificato');
+    await loadCardio();cardioDrafts.delete(disclosureKey('cardio'));render();toast('Segmento cardio salvato e verificato');
   }
   function learningPanel(suggest){
     if(!suggest||suggest.status==='giornata_gia_conclusa')return '';
@@ -377,7 +377,9 @@
   }
   let logEngine, flowEngine, muscleEngine, guideUrl=null;
   const logFeedback=new Map();
-  const logDrafts=new Map(), logOpen=new Set(), sessionDrafts=new Map();
+  const logDrafts=new Map(), logOpen=new Set(), sessionDrafts=new Map(), disclosureState=new Set(), cardioDrafts=new Map();
+  const disclosureKey=id=>JSON.stringify([state.prefs.sheetId,selectedDate,programFor(selectedDate),id]);
+  const disclosureOpen=id=>disclosureState.has(disclosureKey(id));
   const logItems=(items=logExercises())=>items.map(ex=>({id:ex.id,done:exerciseDone(ex,items)}));
   function exerciseDone(ex,items=logExercises()){return checkedExercise(ex,selectedDate,items)||logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort)>=ex.sets;}
   // Only an explicit tap may add an open row. Refresh, save, and loading never add one.
@@ -397,6 +399,38 @@
   function priorRows(ex,items=logExercises()){return logEngine.previousSessionRows(ex,loadReady()?cache.Carichi:[],selectedDate,programFor(selectedDate),items);}
   function checkedExercise(ex,date=selectedDate,items=logExercises()){const matches=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===programFor(date)&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id).sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));return String(matches[0]?.completato).toLowerCase()==='true';}
   const selectOptions=(values,selected)=>values.map(v=>'<option value="'+h(v)+'" '+(String(v)===String(selected)?'selected':'')+'>'+h(v)+'</option>').join('');
+  function exerciseChart(ex,items){
+    if(!loadReady())return '<p class="wl-trend-empty">Caricamento andamento storico…</p>';
+    const data=logEngine.exerciseTrend(ex,cache.Carichi,selectedDate,programFor(selectedDate),items),pts=data.points;
+    if(!pts.length)return '<p class="wl-trend-empty">Andamento disponibile dalla prima serie registrata.</p>';
+    const latest=pts.at(-1),first=pts[0],W=340,H=130,L=30,R=307,T=12,B=100;
+    const maxScale=values=>{const m=Math.max(1,...values.filter(v=>v!==null));const step=10**Math.floor(Math.log10(m));return Math.ceil(m/step*2)/2*step;};
+    const maxKg=maxScale(pts.map(p=>p.kg)),maxReps=maxScale(pts.map(p=>p.reps));
+    const time=p=>Date.parse(p.date+'T12:00:00Z'),span=time(latest)-time(first);
+    const x=p=>span?L+(R-L)*(time(p)-time(first))/span:(L+R)/2;
+    const y=(v,max)=>B-(B-T)*v/max;
+    const n=v=>Number(v.toFixed(2));
+    const short=d=>d.slice(8,10)+'/'+d.slice(5,7);
+    const plot=(key,max,color)=>{
+      let lines='',prev=null;
+      for(const p of pts){
+        if(p[key]===null){prev=null;continue;}
+        if(prev&&(key==='reps'||(p.unit===prev.unit&&p.variant===prev.variant)))lines+='<line x1="'+n(x(prev))+'" y1="'+n(y(prev[key],max))+'" x2="'+n(x(p))+'" y2="'+n(y(p[key],max))+'" stroke="'+color+'" stroke-width="2" stroke-linecap="round"/>';
+        prev=p;
+      }
+      return lines+pts.filter(p=>p[key]!==null).map(p=>'<circle cx="'+n(x(p))+'" cy="'+n(y(p[key],max))+'" r="2.8" fill="'+color+'"><title>'+h(p.date+' · '+p[key]+(key==='kg'?' kg ('+p.unit+')':' ripetizioni'))+'</title></circle>').join('');
+    };
+    const axes=[0,.5,1].map(v=>'<line x1="'+L+'" x2="'+R+'" y1="'+n(y(v,1))+'" y2="'+n(y(v,1))+'" stroke="#434348" stroke-width=".6"/><text x="24" y="'+n(y(v,1)+3)+'" text-anchor="end" fill="#b8f34b">'+n(v*maxKg)+'</text><text x="313" y="'+n(y(v,1)+3)+'" fill="#70b8ff">'+n(v*maxReps)+'</text>').join('');
+    const dates=first===latest?'<text x="'+n(x(first))+'" y="120" text-anchor="middle">'+short(first.date)+'</text>':'<text x="'+L+'" y="120" text-anchor="start">'+short(first.date)+'</text><text x="'+R+'" y="120" text-anchor="end">'+short(latest.date)+'</text>';
+    return '<section class="wl-trend" data-trend-points="'+pts.length+'"><div class="wl-trend-head"><b>Andamento</b><small>'+h(first.date)+' → '+h(latest.date)+'</small></div><div class="wl-trend-legend"><span class="wl-trend-kg">● Carico max <b>'+h(latest.kg===null?'—':latest.kg+' kg')+'</b></span><span class="wl-trend-reps">● Ripetizioni totali <b>'+latest.reps+'</b></span></div><svg class="wl-trend-svg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Andamento per seduta: carico massimo in kg e ripetizioni totali"><g font-size="9" fill="#b5b5bd">'+axes+dates+'</g>'+plot('kg',maxKg,'#b8f34b')+plot('reps',maxReps,'#70b8ff')+'</svg><small class="wl-trend-note">Una rilevazione per seduta · ripetizioni sommate, incl. riscaldamento. Storico del programma selezionato. Carichi dichiarati, non confronti certificati tra attrezzi.'+(pts.some(p=>p.mixed)?' Carichi misti non aggregati.':'')+(data.conflicts?' Serie in conflitto escluse: '+data.conflicts+'.':'')+'</small></section>';
+  }
+  function cardioPrescription(suggest){
+    const records=cache.SchedeConfermate.filter(r=>r.data===selectedDate);
+    let cardio=suggest.cardio,source='Programma indicativo';
+    if(records.length===1){try{const p=planEngine.readPlanRecord(records[0]);if(p.program===suggest.program){cardio=p.cardio;source='Obiettivo confermato';}}catch{}}
+    if(!cardio.duration_min)return '<div class="wl-cardio-plan"><b>Cardio</b><small>Nessun cardio obbligatorio programmato.</small></div>';
+    return '<div class="wl-cardio-plan"><div class="wl-cardio-title"><div><b>Cardio · tapis roulant</b><small>'+source+' · FC indicativa '+h(cardio.target_average_hr_bpm)+' bpm</small></div><strong>'+cardio.duration_min+' min</strong></div><div class="wl-cardio-phases">'+cardio.phases.map(p=>'<div><b>'+h(p.label)+' · '+p.duration_min+' min</b><small>'+h(p.treadmill_speed_kmh.join('–'))+' km/h · '+p.incline_pct+'% · '+h(p.indicative_range_bpm.join('–'))+' bpm</small></div>').join('')+'</div><small>Adatta il ritmo alla fatica; non forzare la FC. Solo obiettivi, nessuna registrazione automatica.</small></div>';
+  }
   function exerciseRow(ex,index,items){
     const rows=setRows(ex),past=priorRows(ex,items);
     const count=logEngine.sessionWorkingCount(rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex,selectedDate,items),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
@@ -407,17 +441,18 @@
     const defaultUnit=dumbbell?'kg per mano':barbell?'kg totale':'kg macchina';
     const defaultEquipment='';
     const feedback=logFeedback.get(key);
-    const history=past.length?'<span class="wl-history-date">'+h(past[0].data)+'</span> '+past.map(r=>'<span class="wl-hist" title="'+h(r.unita_carico)+'">'+h(r.esercizio)+' · S'+h(r.numero_serie)+' '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'<small>'+h(r.unita_carico||'Unità non identificata')+'</small></span>').join(' '):loadedAt?'Nessuna serie precedente':'Storico da caricare';
+    const history=past.map(r=>'<div class="wl-previous-set"><span>S'+h(r.numero_serie)+'</span><b>'+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'</b></div>').join('');
     const refs=(ex.references||[]).map(r=>'<span class="wl-ref">'+h(r.exercise)+' · '+h(r.unit)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+': '+h(r.reference_kg??'—')+' kg × '+h(r.reference_reps??'—')+(r.conditional_target_reps==null?'':' → '+h(r.conditional_target_reps)+' reps')+'<small>'+h(r.load_increase_allowed?'Incremento minimo solo se tecnica e recupero adeguati.':r.note||'')+'</small></span>').join('');
     const compactLast=past.at(-1),compact=compactLast?h(compactLast.carico_kg)+' kg × '+h(compactLast.ripetizioni):'Nessun dato';
     const opened=isExerciseOpen(selectedDate,ex.id);
     const image=guide?'<img class="wl-photo" src="'+h(guide.frames[0])+'" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">':'';
-    const setList=rows.map(r=>'<div class="wl-set-record"><button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||disabled||!logEngine.unitParts(r.unita_carico)||!logEngine.namesFor(ex).some(v=>logEngine.norm(v)===logEngine.norm(r.esercizio))?'disabled':'')+'>S'+h(r.numero_serie)+' · '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+' <small>'+h(engine.readSetEffort(r.origine).tipo_serie)+'</small></button><button type="button" class="wl-delete" data-wl-delete="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" aria-label="Elimina serie '+h(r.numero_serie)+'" '+(disabled?'disabled':'')+'>Elimina</button></div>').join('');
+    const setList=rows.map(r=>'<div class="wl-set-record"><button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||disabled||!logEngine.unitParts(r.unita_carico)||!logEngine.namesFor(ex).some(v=>logEngine.norm(v)===logEngine.norm(r.esercizio))?'disabled':'')+'><span>S'+h(r.numero_serie)+'</span><b>'+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'</b></button><button type="button" class="wl-delete" data-wl-delete="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" aria-label="Elimina serie '+h(r.numero_serie)+'" title="Elimina serie" '+(disabled?'disabled':'')+'>×</button></div>').join('');
+
     return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'" data-wl-open="'+(opened?'true':'false')+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+(restSeconds?' · Rec. '+restEngine.formatRecovery(restSeconds):'')+'</small><small>Storico: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
       '<div class="wl-expand" '+(opened?'':'hidden inert style="display:none!important"')+'>'+
-      '<div class="wl-comparison wl-current-objective"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div></div>'+
+      (opened&&!timed?exerciseChart(ex,items):'')+
       '<div class="wl-meter" aria-label="Serie allenanti verificate">'+Array.from({length:ex.sets},(_,i)=>'<i class="'+(i<count?'filled':'')+'"></i>').join('')+'</div>'+
-      '<section class="wl-current-session"><div class="wl-session-label"><b>Serie di questa seduta</b><small>'+h(selectedDate)+' · '+rows.length+' registrate</small></div>'+(setList?'<div class="wl-set-list">'+setList+'</div>':'<p class="wl-empty-session">'+(loadReady()?'Nessuna serie registrata per questa seduta.':'Caricamento registrazioni…')+'</p>')+'</section>'+
+      '<section class="wl-session-compare"><div class="wl-compare-past"><div class="wl-compare-title"><b>Ultima seduta</b><small>'+h(past[0]?.data||'Nessuno storico')+'</small></div>'+(history||'<p class="wl-empty-session">Nessuna serie</p>')+(past.length?'<button type="button" class="wl-history-link" data-wl-history-day="'+h(past[0].data)+'">Apri storico</button>':'')+'</div><div class="wl-compare-now"><div class="wl-compare-title"><b>Questa seduta</b><small>'+h(selectedDate)+' · '+rows.length+' serie</small></div>'+(setList?'<div class="wl-set-list">'+setList+'</div>':'<p class="wl-empty-session">'+(loadReady()?'Nessuna serie':'Da caricare')+'</p>')+'</div></section>'+
       (timed?'<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future?'disabled':'')+'> Conferma attività svolta (tempo nel diario seduta)</label>':
       '<div class="wl-entry">'+
       '<form novalidate class="wl-set-form" data-wl-form="'+h(ex.id)+'" data-wl-date="'+h(selectedDate)+'" '+(draft.editId?'data-edit-id="'+h(draft.editId)+'"':'')+'><div class="wl-fields">'+
@@ -425,21 +460,20 @@
       '<label>Serie<input name="serie" type="number" min="1" max="25" value="'+val('serie',next??'')+'" required></label>'+
       '<label>Kg<input name="kg" inputmode="decimal" type="number" min="0" step="any" value="'+val('kg')+'" placeholder="—" required></label>'+
       '<label>Ripetizioni<input name="reps" inputmode="numeric" type="number" min="1" max="100" value="'+val('reps')+'" placeholder="—" required></label>'+
-      '</div><div class="wl-fields wl-equipment"><label>Palestra<select name="palestra">'+selectOptions(['A','B'],draft.palestra||unit?.gym||'A')+'</select></label>'+
+      '</div><details class="wl-advanced" data-wl-disclosure="advanced-'+h(ex.id)+'" '+(disclosureOpen('advanced-'+ex.id)||draft.editId?'open':'')+'><summary>Opzioni serie · palestra, unità, RIR/RPE</summary><div class="wl-fields wl-equipment"><label>Palestra<select name="palestra">'+selectOptions(['A','B'],draft.palestra||unit?.gym||'A')+'</select></label>'+
       '<label>Macchinario (facoltativo)<input name="attrezzo" value="'+val('attrezzo',defaultEquipment)+'" placeholder="Nome / ID, se noto"></label>'+
       '<label>Unità<select name="unita">'+selectOptions(['kg macchina','kg per mano','kg totale'],draft.unita||unit?.type||defaultUnit)+'</select></label>'+
       '<label>Tipo serie<select name="tipo_serie">'+selectOptions(['allenante','riscaldamento','non_specificata'],draft.tipo_serie||'allenante')+'</select></label></div>'+
-      '<div class="wl-fields wl-effort"><label>RIR<input name="rir" type="number" min="0" max="10" value="'+val('rir')+'" placeholder="—"></label><label>RPE<input name="rpe" type="number" min="1" max="10" step="0.5" value="'+val('rpe')+'" placeholder="—"></label></div>'+
+      '<div class="wl-fields wl-effort"><label>RIR<input name="rir" type="number" min="0" max="10" value="'+val('rir')+'" placeholder="—"></label><label>RPE<input name="rpe" type="number" min="1" max="10" step="0.5" value="'+val('rpe')+'" placeholder="—"></label></div></details>'+
       '<div class="wl-actions">'+(last?'<button class="btn btn-quiet" type="button" data-wl-copy="'+h(ex.id)+'">Copia valori dallo storico</button>':'')+'<button class="btn" type="submit" '+(saveDisabled?'disabled':'')+'>'+(setSaving?'Salvataggio…':'Salva serie')+'</button></div>'+
       '<p class="wl-save-feedback '+(feedback?.error?'wl-save-error':'')+'" data-wl-feedback role="status">'+(feedback?h(feedback.message):future?'Non puoi registrare una prestazione futura.':!connected()?'Google non collegato. Premi Salva serie per ricollegarti.':loadFailure?h(loadFailure):!loadReady()?'Lo storico sarà verificato al salvataggio.':'Indica carico e ripetizioni. Macchinario, RIR e RPE facoltativi.')+'</p></form></div>'+
-      '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+'<details class="wl-history-section"><summary>Storico precedente'+(past.length?' · '+h(past[0].data):'')+'</summary><div class="wl-history">'+history+(past.length?'<button type="button" class="wl-history-link" data-wl-history-day="'+h(past[0].data)+'">Apri seduta precedente</button>':'')+'</div></details></div></article>';
+      '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+(refs?'<details class="wl-advanced"><summary>Riferimenti carico</summary>'+refs+'</details>':'')+'</div></article>';
   }
   function trainingPanel(){
     const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>exerciseDone(x,ex)).length;
-    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.7.8</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
+    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.7.9</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
       '<div class="progress wl-session-progress"><span style="width:'+(ex.length?done/ex.length*100:0)+'%"></span></div><div class="wl-toolbar"><span>Serie verificate · storico privato</span><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      '<details class="wl-plan"><summary>Obiettivi, conferma scheda e audit</summary>'+planPanel(suggest)+auditPanel()+'</details>'+
-      '<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+sessionSummary(ex,done)+'</section>';
+      '<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+cardioPrescription(suggest)+'<details class="wl-advanced wl-cardio-details" data-wl-disclosure="cardio" '+(disclosureOpen('cardio')?'open':'')+'><summary>Registra cardio effettivo</summary>'+segmentPanel()+'</details>'+sessionSummary(ex,done)+'<details class="wl-plan" data-wl-disclosure="audit" '+(disclosureOpen('audit')?'open':'')+'><summary>Obiettivi e audit</summary>'+planPanel(suggest)+auditPanel()+'</details></section>';
   }
   function sessionSummary(ex,done){
     const closed=isDone(selectedDate),ready=ex.length>0&&done===ex.length;
@@ -502,7 +536,7 @@
     if(!document.querySelector('#app') || !engine)return;
     const root=document.querySelector('#app');
     if(currentPage==='progress')root.insertAdjacentHTML('afterbegin',summary()+latestLoads());
-    if(currentPage==='training'){const old=root.querySelector('.training-list')?.closest('.panel');if(old)old.outerHTML=trainingPanel();else root.insertAdjacentHTML('afterbegin',trainingPanel());root.insertAdjacentHTML('beforeend',segmentPanel());const sf=root.querySelector('#training-form'),draft=sessionDrafts.get(selectedDate);if(sf&&draft)for(const [k,v] of Object.entries(draft))if(sf.elements[k])sf.elements[k].value=v;}
+    if(currentPage==='training'){const old=root.querySelector('.training-list')?.closest('.panel');if(old)old.outerHTML=trainingPanel();else root.insertAdjacentHTML('afterbegin',trainingPanel());const sf=root.querySelector('#training-form'),draft=sessionDrafts.get(selectedDate);if(sf&&draft)for(const [k,v] of Object.entries(draft))if(sf.elements[k])sf.elements[k].value=v;const panel=sf?.closest('.panel'),shell=root.querySelector('.wl-shell');if(panel&&shell&&!shell.contains(panel)){const details=document.createElement('details');details.className='wl-advanced wl-session-fields';details.dataset.wlDisclosure='session';details.open=disclosureOpen('session');details.innerHTML='<summary>Dati complessivi della seduta</summary>';shell.append(details);details.append(panel);panel.classList.add('wl-inline-panel');}const cf=root.querySelector('#cut30-cardio-form'),cd=cardioDrafts.get(disclosureKey('cardio'));if(cf&&cd)for(const [k,v] of Object.entries(cd))if(cf.elements[k])cf.elements[k].value=v;}
     if(currentPage==='nutrition')root.insertAdjacentHTML('afterbegin',recipePanel());
   }
   function slug(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'esercizio';}
@@ -590,7 +624,7 @@
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.7.8');
+      const mod=await import('./engine/delete-record.mjs?v=3.7.9');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
       assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
       const remaining=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,items),engine.readSetEffort);
@@ -664,7 +698,7 @@
       if(!form.checkValidity()){
         const invalid=form.querySelector(':invalid'),label=invalid?.closest('label')?.textContent?.trim()||'campo obbligatorio';
         showSetFeedback(form,'Verifica '+label+': '+(invalid?.validationMessage||'valore mancante o non valido'),true);
-        invalid?.focus();form.reportValidity();return;
+        const section=invalid?.closest('details');if(section)section.open=true;invalid?.focus();form.reportValidity();return;
       }
       if(form.dataset.wlDate===localDate()&&!form.dataset.editId){try{unlockRestAudio().catch(()=>{});}catch{}}
       showSetFeedback(form,'Salvataggio e verifica su Google Sheets…');
@@ -684,6 +718,7 @@
     });
   }
   function onInput(e){
+    const cardio=e.target.closest('#cut30-cardio-form');if(cardio){cardioDrafts.set(disclosureKey('cardio'),Object.fromEntries(new FormData(cardio)));return;}
     const session=e.target.closest('#training-form');if(session){sessionDrafts.set(selectedDate,Object.fromEntries(new FormData(session)));return;}
     const log=e.target.closest('.wl-set-form');if(log){captureLog(log);return;}
     const form=e.target.closest('#cut30-recipe-form');
@@ -704,7 +739,7 @@
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
     const history=e.target.closest('[data-wl-history-day]');if(history){if(setSaving)return;selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){e.preventDefault();if(logExercises().some(x=>x.id===toggle.dataset.wlToggle)){toggleExercise(selectedDate,toggle.dataset.wlToggle);render();}return;}
-    if(e.target.closest('[data-wl-session-data]')){document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
+    if(e.target.closest('[data-wl-session-data]')){const form=document.querySelector('#training-form'),detail=form?.closest('details');if(detail){detail.open=true;disclosureState.add(disclosureKey('session'));}form?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
     const edit=e.target.closest('[data-wl-edit]');if(edit){const ex=logExercises().find(x=>x.id===edit.dataset.wlId);if(ex)fillLog(ex,cache.Carichi.find(x=>x.id===edit.dataset.wlEdit),true);return;}
@@ -733,12 +768,13 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.8');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.9');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
       document.addEventListener('click',onClick);
       document.addEventListener('input',onInput);
+      document.addEventListener('toggle',e=>{const el=e.target,id=el.dataset?.wlDisclosure;if(id&&el.isConnected){const key=disclosureKey(id);if(el.open)disclosureState.add(key);else disclosureState.delete(key);}},true);
       document.addEventListener('change',onInput);
       document.addEventListener('change',e=>{const id=e.target.dataset?.exercise;if(id&&currentPage==='training'&&e.target.checked){const ex=logExercises().find(x=>x.id===id);if(ex&&(ex.id==='plank'||ex.muscle==='Cardio'))collapseCompleted(selectedDate,id);}},true);
       document.addEventListener('submit',e=>{if(e.target.id==='training-form'&&selectedDate<=localDate()&&e.target.checkValidity())sessionDrafts.delete(selectedDate);},true);
