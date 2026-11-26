@@ -127,7 +127,7 @@ export function exerciseTrend(ex,rows,through,program,items){
   const identity=identities.size===1?[...identities][0]:'';
   const comparable=!!identity&&kg.every(r=>{const u=unitParts(r.unita_carico);return u&&['kg macchina','kg per mano','kg totale'].includes(norm(u.type))&&!/^(non identificato|non specificato|corpo libero)$/i.test(u.equipment.trim());});
   const unclassified=eligible.filter(r=>readSetEffort(r.origine).tipo_serie==='non_specificata').length;
-  const complete=eligible.length>0&&kg.length===eligible.length&&[...slots.values()].every(g=>g.length===1);
+  const complete=eligible.length>0&&kg.length===eligible.length&&[...slots.values()].every(g=>g.length===1&&valid.includes(g[0]));
   const volume=complete&&!mixed&&kg.length?Math.round(kg.reduce((s,r)=>s+Number(r.carico_kg)*Number(r.ripetizioni),0)*100)/100:null;
   const unit=kinds.size===1?[...kinds][0]:'';
   points.push({date,reps:eligible.reduce((s,r)=>s+Number(r.ripetizioni),0),kg:kg.length&&!mixed?Math.max(...kg.map(r=>Number(r.carico_kg))):null,unit,variant:variants.size===1?[...variants][0]:'',sets:eligible.length,mixed,volume,identity,comparable,unclassified,complete});
