@@ -8,11 +8,12 @@
   const uniqueCompleted=()=>{const m=new Map();for(const x of state.tables.Allenamenti.filter(isTraining))m.set(x.data,x);return[...m.values()]};
   const lastDays=(count=7)=>Array.from({length:count},(_,i)=>shiftDate(localDate(),i-count+1));
   const mSteps=()=>{const map=new Map();for(const x of state.tables.Misure||[])if(n(x.passi_giornalieri)>0)map.set(x.data,Math.max(n(x.passi_giornalieri),n(map.get(x.data))));return map};
-  let trackerEngine=null,selectedPeriod="week",confirmedPlans=[];
+  let trackerEngine=null,selectedPeriod="week",confirmedPlans=[],loadEvidence={rows:[],available:false,sheetId:null,at:0};
   window.cut30SetConfirmedPlans=rows=>{confirmedPlans=Array.isArray(rows)?rows:[];};
+  window.cut30SetLoadEvidence=(rows,at,sheetId)=>{loadEvidence={rows:Array.isArray(rows)?rows:[],available:Array.isArray(rows),sheetId,at};};
   function aggregates(period=selectedPeriod){
     if(!trackerEngine)return null;
-    return trackerEngine.buildPeriodTracker({today:localDate(),period,tables:state.tables,confirmedPlans,programFor,targetsFor,stepsGoal:n(cfg("passi_giorno"))||12000,weeklyCardioGoal:n(cfg("obiettivo_cardio_sett"))||300});
+    return trackerEngine.buildPeriodTracker({today:localDate(),period,tables:state.tables,confirmedPlans,loadEvidence:loadEvidence.sheetId===state.prefs?.sheetId?loadEvidence:{rows:[],available:false},programFor,targetsFor,stepsGoal:n(cfg("passi_giorno"))||12000,weeklyCardioGoal:n(cfg("obiettivo_cardio_sett"))||300});
   }
   const display=(v,unit='')=>v===null||v===undefined?'—':tFmt(v,Number.isInteger(v)?0:1)+unit;
   const periodLabel=a=>a.period==='day'?'Oggi':a.period==='week'?'Settimana corrente':'Mese corrente';
@@ -94,8 +95,8 @@
     return '<section class="cx-card cx-nutrition"><div class="cx-head"><div><span class="cx-kicker">Alimentazione</span><h2>Bilancio di oggi</h2></div><a href="#nutrition" data-nav="nutrition" class="cx-link">Apri diario</a></div><div class="cx-macro-hl"><div><span>Assunte</span><strong>'+tFmt(values.kcal)+'</strong><small>di '+tFmt(goal.kcal)+' kcal</small></div><div class="cx-macro-right">'+track(values.kcal,goal.kcal)+(meals.length?'<small>'+meals.length+' alimenti registrati</small>':'<small>Nessun pasto registrato oggi</small>')+'</div></div><div class="cx-macros">'+elements.slice(1).map(x=>'<div class="cx-macro-line"><div><span>'+x[0]+'</span><b>'+tFmt(x[1],1)+' <small>/ '+tFmt(x[2])+' '+x[3]+'</small></b></div>'+track(x[1],x[2],'',true)+'</div>').join('')+'</div><button class="cx-text-action" data-cut-refresh>'+icon("refresh")+' Aggiorna i pasti registrati in chat</button><p class="cx-disclaimer">Fibre: riferimento 25–35 g. I valori stimati dipendono dalle quantità comunicate.</p></section>';
   }
   function hero(a,xp){
-    const day=localDate(),plan=programFor(day),done=isDone(day),status=token&&tokenExpires>Date.now()+30000,score=a.index;
-    return '<section class="cx-hero"><div class="cx-hero-left"><span class="cx-kicker">Il tuo spazio di allenamento</span><h2>'+h(dayLabel(day,{weekday:"long",day:"numeric",month:"long"}))+'</h2><p>Oggi: <strong>'+h(plan)+'</strong> · '+(done?'Sessione completata':'Sessione da svolgere')+'</p><div class="cx-hero-buttons"><a class="cx-primary-action" href="#training" data-nav="training">'+icon("barbell")+' Apri allenamento</a><button class="cx-ghost-action" data-cut-refresh>'+icon("refresh")+' Aggiorna dati</button></div></div><div class="cx-score-circle"><strong>'+(score===null?'—':score)+'</strong><small>indice attività<br/>/100</small><span>'+(a.coverage<5?'Provvisorio':'Calcolato')+'</span></div></section>';
+    const day=localDate(),plan=programFor(day),done=isDone(day),score=a.index;
+    return '<section class="cx-hero cx-training-hero"><div class="cx-hero-left"><span class="cx-kicker">CUT30 / TRAINING CLUB</span><p class="cx-hero-date">'+h(dayLabel(day,{weekday:"long",day:"numeric",month:"long"}))+'</p><h2>'+h(plan)+'</h2><div class="cx-session-tag '+(done?'is-complete':'')+'">'+(done?'SEDUTA COMPLETATA':'SESSIONE DEL GIORNO')+'</div><div class="cx-hero-buttons"><a class="cx-primary-action" href="#training" data-nav="training">'+icon("barbell")+' '+(done?'Apri sessione':'Apri allenamento')+'</a><button class="cx-ghost-action" data-cut-refresh aria-label="Aggiorna dati">'+icon("refresh")+'</button></div></div><div class="cx-hero-index"><span>ADERENZA</span><strong>'+(score===null?'—':score)+'<small>/100</small></strong><p>'+a.coverage+'/5 indicatori</p>'+track(score||0,100)+'</div></section>';
   }
   function xpBanner(){
     const xp=makeXp(),ready=token&&tokenExpires>Date.now()+30000;
@@ -122,18 +123,37 @@
     return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Alimentazione · '+periodLabel(a)+'</span><h2>Obiettivi nutrizionali</h2></div><a href="#nutrition" data-nav="nutrition" class="cx-link">Diario</a></div>'+Object.entries(a.nutrition).map(([k,m])=>'<div class="cx-macro-line"><div><span>'+labels[k]+'</span><b>'+display(m.actual)+' / '+display(m.expected)+' '+(k==='kcal'?'kcal':'g')+'</b></div>'+track(m.actual||0,m.expected||1,'',true)+'<small>Totale periodo: '+display(m.full)+'</small></div>').join('')+'<p class="cx-disclaimer">Registrazioni presenti in '+a.nutritionDays+'/'+a.elapsedDays+' giorni. Un giorno senza diario non dimostra assunzione nulla.</p></section>';
   }
   function muscleSummary(a){
-    const muscle=a.muscles;
+    const muscle=a.muscles,evidence=a.muscleEvidence;
     const order=["Petto","Schiena","Spalle","Braccia","Quadricipiti","Posteriori","Polpacci","Core"];
-    return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Volume programmato · '+periodLabel(a)+'</span><h2>Gruppi muscolari</h2></div><a href="#progress" data-nav="progress" class="cx-link">Dettaglio</a></div><div class="cx-muscle-mini">'+anatomySvg(muscle,true)+'</div><div class="cx-muscle-summary">'+order.slice(0,6).map(g=>{const v=muscle[g],pct=v.planned?bound(100*v.done/v.planned):0;return '<div><span>'+g+'</span><strong>'+Math.round(pct)+'%</strong>'+track(pct,100,'',true)+'</div>'}).join('')+'</div><p class="cx-disclaimer">Percentuali = serie previste degli esercizi spuntati / serie previste del periodo; non serie misurate né crescita muscolare.</p></section>';
+    const total=order.reduce((sum,g)=>sum+muscle[g].working,0),planned=order.reduce((sum,g)=>sum+muscle[g].planned,0),legacy=order.reduce((sum,g)=>sum+muscle[g].unclassified,0);
+    const metric=g=>{const v=muscle[g],status=v.status,pc=v.percent===null?'N/D':v.percent+'%';
+      return '<div class="cx-muscle-item ms-'+status+'"><div class="ms-line"><strong>'+h(g)+'</strong><span class="ms-pct">'+pc+(v.partial&&v.percent!==null?'*':'')+'</span></div>'+
+       '<div class="ms-series"><b>'+v.working+'</b> / '+v.planned+' serie allenanti <small>· '+v.expected+' previste a oggi</small></div>'+
+       '<div class="ms-track" aria-label="'+h(g)+' '+pc+'"><i style="width:'+Math.min(100,v.percent??0)+'%"></i></div>'+
+       (v.unclassified?'<small class="ms-note">'+v.unclassified+' serie storiche non classificate</small>':'')+
+       (v.secondary?'<small class="ms-note">'+v.secondary+' coinvolgimenti indiretti</small>':'')+
+       (v.missing?'<small class="ms-note">Dettaglio mancante per '+v.missing+' esercizi</small>':'')+
+       (v.conflicts?'<small class="ms-note">'+v.conflicts+' serie in conflitto</small>':'')+'</div>';};
+    return '<section class="cx-card cx-muscle-card" id="muscle-coverage"><div class="cx-head"><div><span class="cx-kicker">TRAIN / '+periodLabel(a)+'</span><h2>Copertura muscolare</h2></div><button type="button" class="cx-ghost-action ms-refresh" data-cut-refresh aria-label="Aggiorna serie">'+icon("refresh")+'</button></div>'+
+      '<div class="ms-overview"><div><strong>'+ (evidence.available?total:'—') +'</strong><span> / '+planned+' serie allenanti</span><small>'+legacy+' serie storiche non classificate</small></div><span class="ms-data">'+(evidence.available?'Storico caricato':'Storico da caricare')+'</span></div>'+
+      '<div class="cx-muscle-mini">'+anatomySvg(muscle,true)+'</div><div class="ms-legend"><span class="ms-zero">Non registrato</span><span class="ms-partial">Parziale</span><span class="ms-goal">Obiettivo</span><span class="ms-over">Oltre</span><span class="ms-unknown">N/D</span></div>'+
+      '<div class="cx-muscle-summary">'+order.map(metric).join('')+'</div>'+
+      '<p class="cx-disclaimer">Serie allenanti registrate / obiettivo dell’intero periodo. N/D = informazione insufficiente o nessun obiettivo. * = dato parziale. Le serie non classificate, il riscaldamento e i coinvolgimenti indiretti non aumentano la percentuale. Le spunte storiche non sono misure di volume.</p>'+
+      (evidence.unmatched||evidence.invalid||evidence.conflicts?'<p class="ms-warning">Da riconciliare: '+evidence.unmatched+' record non associati, '+evidence.invalid+' non validi, '+evidence.conflicts+' conflitti. Nessuna serie inventata.</p>':'')+
+      (!evidence.available?'<p class="ms-warning">Connetti Google e aggiorna per leggere Carichi. Nessun dato mancante è interpretato come zero.</p>':'')+'</section>';
   }
   function fullDashboard(){
     const a=aggregates(),xp=makeXp();
     if(!a)return '<section class="cx-card">Caricamento obiettivi…</section>';
-    return '<div class="cx-page">'+hero(a,xp)+periodSelector(a)+cards(a)+'<div class="cx-main-grid">'+radarCard(a)+periodNutrition(a)+'</div><div class="cx-main-grid">'+weekCard(a)+muscleSummary(a)+'</div>'+dailyPlanCard(a)+'<section class="cx-card cx-footnote"><div><b>Indice attività '+(a.index===null?'—':a.index+'/100')+'</b><p>Valutazione indicativa costruita sui dati inseriti. Non misura VO₂max, forza massima o composizione corporea: per questi servono rilevazioni dedicate.</p></div><a href="#progress" data-nav="progress" class="cx-link">Scopri come funziona</a></section></div>';
+    return '<div class="cx-page cx-dashboard">'+hero(a,xp)+periodSelector(a)+cards(a)+
+      '<div class="cx-main-grid cx-training-grid">'+muscleSummary(a)+weekCard(a)+'</div>'+
+      '<div class="cx-main-grid">'+periodNutrition(a)+radarCard(a)+'</div>'+
+      '<details class="cx-card cx-report-details"><summary>Dettaglio giornaliero e previsioni</summary>'+dailyPlanCard(a)+'</details></div>';
   }
   function anatomySvg(groups,small=false){
-    const val=g=>{const v=groups[g];return v&&v.planned?bound(v.done/v.planned):0};
-    const part=(group,d)=>'<path data-muscle="'+group+'" d="'+d+'" style="--muscle-strength:'+val(group).toFixed(3)+'" fill="'+(val(group)>0?"url(#cx-muscle-teal)":"url(#cx-muscle-idle)")+'" opacity="'+(val(group)>0?(0.38+val(group)*.6).toFixed(2):".55")+'"><title>'+group+': '+Math.round(val(group)*100)+'%</title></path>';
+    const val=g=>groups[g]?.percent??null;
+    const fills={unknown:"#555b57",none:"#555b57",zero:"#303632",partial:"#e9b84e",goal:"#bafa4d",over:"#f48a42"};
+    const part=(group,d)=>{const v=groups[group]||{},status=v.status||'unknown';return '<path data-muscle="'+group+'" d="'+d+'" fill="'+(fills[status]||fills.unknown)+'" opacity="'+(status==='unknown'?'.72':'1')+'"><title>'+group+': '+(val(group)===null?'N/D':val(group)+'%')+'</title></path>';};
     const figure=(back=false)=>{
       const torso='<path class="cx-body-base" d="M75 76 C58 73 47 83 45 101 L48 142 59 171 61 195 86 216 111 195 114 171 125 142 128 101 C124 81 110 73 97 76 Z"/>';
       const head='<path class="cx-body-base" d="M67 29 Q86 7 105 29 L103 50 Q98 68 93 69 L93 81 79 81 79 69 Q69 64 68 51 Z"/>';
@@ -148,7 +168,7 @@
       const abs=part("Core","M67 134 Q85 137 105 134 L103 173 87 193 70 173 Z");
       const backPath=part("Schiena","M58 95 Q83 111 86 99 Q90 111 114 95 L118 138 106 165 87 187 66 165 54 138 Z");
       const glutes=part("Posteriori","M62 181 L87 190 84 219 Q62 228 55 209 Z")+part("Posteriori","M111 181 L87 190 91 219 Q112 228 118 209 Z");
-      return '<svg class="cx-anatomy" viewBox="0 0 174 372" role="img" aria-label="'+(back?'Vista posteriore':'Vista anteriore')+' dei gruppi muscolari"><defs><linearGradient id="cx-base-'+(back?'b':'f')+'" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#526b83"/><stop offset=".5" stop-color="#22354b"/><stop offset="1" stop-color="#182537"/></linearGradient><linearGradient id="cx-muscle-teal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#77ffe6"/><stop offset="1" stop-color="#10b5b5"/></linearGradient><linearGradient id="cx-muscle-idle"><stop stop-color="#456279"/><stop offset="1" stop-color="#294057"/></linearGradient></defs><g fill="url(#cx-base-'+(back?'b':'f')+')" stroke="#6a8ba3" stroke-width="1.1" stroke-linejoin="round">'+legs+torso+arms+head+'</g><g class="cx-anatomy-regions" stroke="#18334b" stroke-width="1.7">'+(back?backPath+glutes+shoulders+armsDetail+legsBack+calves:shoulders+chest+armsDetail+abs+legsFront+calves)+'</g><path d="M86 101V175" stroke="#9bc5d6" stroke-width=".8" opacity=".4" stroke-dasharray="4 4"/><text x="87" y="365" text-anchor="middle" font-size="12" font-weight="700" fill="#a5bbcf">'+(back?'RETRO':'FRONTE')+'</text></svg>';
+      return '<svg class="cx-anatomy" viewBox="0 0 174 372" role="img" aria-label="'+(back?'Vista posteriore':'Vista anteriore')+' dei gruppi muscolari"><defs><linearGradient id="cx-base-'+(back?'b':'f')+'" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#626963"/><stop offset=".5" stop-color="#363c37"/><stop offset="1" stop-color="#262c28"/></linearGradient><linearGradient id="cx-muscle-teal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#77ffe6"/><stop offset="1" stop-color="#10b5b5"/></linearGradient><linearGradient id="cx-muscle-idle"><stop stop-color="#456279"/><stop offset="1" stop-color="#294057"/></linearGradient></defs><g fill="url(#cx-base-'+(back?'b':'f')+')" stroke="#6e776f" stroke-width="1.1" stroke-linejoin="round">'+legs+torso+arms+head+'</g><g class="cx-anatomy-regions" stroke="#171c18" stroke-width="1.7">'+(back?backPath+glutes+shoulders+armsDetail+legsBack+calves:shoulders+chest+armsDetail+abs+legsFront+calves)+'</g><path d="M86 101V175" stroke="#b4bcb3" stroke-width=".8" opacity=".4" stroke-dasharray="4 4"/><text x="87" y="365" text-anchor="middle" font-size="12" font-weight="700" fill="#b4bcb3">'+(back?'RETRO':'FRONTE')+'</text></svg>';
     };
     return '<div class="cx-anatomy-pair '+(small?'small':'')+'">'+figure(false)+figure(true)+'</div>';
   }
@@ -174,13 +194,12 @@
   renderProgress=function(){
     const a=aggregates(),base=nativeProgress();
     if(!a)return base;
-    const legend=base.replace(/<span class="tiny" style="min-width:45px;text-align:right">(\d+)\/(\d+)<\/span>/g,function(_,done,planned){return '<span class="tiny cx-percent" style="min-width:45px;text-align:right">'+(Number(planned)?Math.round(100*Number(done)/Number(planned)):0)+'%</span>';});
-    return '<div class="cx-section-lead"><div><span class="cx-kicker">Analisi dell’attività</span><h2>Progressi misurabili</h2><p>Radar attività, peso corporeo e distribuzione del volume di lavoro muscolare.</p></div></div>'+periodSelector(a)+radarCard(a)+dailyPlanCard(a)+xpCard()+legend;
+    return '<div class="cx-section-lead"><div><span class="cx-kicker">PERFORMANCE / TRACK</span><h2>Progressi</h2><p>Volume registrato, peso corporeo e aderenza al piano.</p></div></div>'+periodSelector(a)+muscleSummary(a)+radarCard(a)+base+xpCard()+'<details class="cx-card cx-report-details"><summary>Dettaglio giorno per giorno</summary>'+dailyPlanCard(a)+'</details>';
   };
   render=function(){
     const ok=originalRender();if(ok===false)return false;
     const target=document.querySelector("#app");if(!target)return false;
-    target.insertAdjacentHTML("afterbegin",xpBanner());
+    if(currentPage==="progress"||currentPage==="settings")target.insertAdjacentHTML("afterbegin",xpBanner());
     return true;
   };
   let lastRemoteCheck=0,refreshBusy=false;
@@ -224,7 +243,7 @@
       if(selector){e.preventDefault();selectedPeriod=selector.dataset.cutPeriod;render();return;}
       const btn=e.target.closest("[data-cut-refresh]");
       if(!btn)return;
-      e.preventDefault();e.stopImmediatePropagation();refreshCloud(false);
+      e.preventDefault();e.stopImmediatePropagation();refreshCloud(false);window.cut30RefreshLoadEvidence?.();
     },true);
     // La lettura periodica non riscrive il Google Sheet.
     window.setTimeout(()=>refreshCloud(true),650);

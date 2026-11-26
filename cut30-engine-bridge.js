@@ -35,7 +35,9 @@
         result=await googleApi('/values:batchGet?'+fallback.toString());
         cache.AnalisiAuto=[];
       }
-      cache.Carichi=parseTable(result.valueRanges?.[0]?.values||[]);
+      const loadValues=result.valueRanges?.[0]?.values;
+      if(!Array.isArray(loadValues)||!loadValues.length||headers.Carichi.some((k,i)=>loadValues[0][i]!==k))throw Error('Schema Carichi inatteso: storico non verificato');
+      cache.Carichi=parseTable(loadValues);
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
@@ -45,6 +47,7 @@
         cache.CicloAuto=meta.sheets?.some(x=>x.properties.title==='CicloAuto')?parseTable((await googleApi('/values/'+encodeURIComponent("'CicloAuto'!A:I")+'?valueRenderOption=UNFORMATTED_VALUE')).values||[]):[];
       }catch{cache.CicloAuto=[];}
       loadedAt=Date.now();
+      window.cut30SetLoadEvidence?.(cache.Carichi,loadedAt,state.prefs.sheetId);
       if(engine)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
     }catch(err){console.error('CUT30 Engine refresh:',err);if(!silent)toast('Aggiornamento motore non riuscito: '+err.message);}
@@ -435,6 +438,7 @@
     try{
       await saveRow('Carichi',rec,existing||null);
       cache.Carichi=cache.Carichi.filter(x=>x.id!==rec.id).concat(rec);
+      window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),state.prefs.sheetId);
       const after=logEngine.workingCount(ex,logEngine.matching(ex,cache.Carichi.filter(x=>x.data===date)),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
       const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});logOpen.add(key);
@@ -500,6 +504,7 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    if(e.target.closest('[data-cut-refresh]')){refreshCloud(true);return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
     const edit=e.target.closest('[data-wl-edit]');if(edit){const ex=logExercises().find(x=>x.id===edit.dataset.wlId);if(ex)fillLog(ex,cache.Carichi.find(x=>x.id===edit.dataset.wlEdit),true);return;}
@@ -527,6 +532,7 @@
     try{
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       logEngine=await import('./engine/workout-log.mjs');
+      window.cut30RefreshLoadEvidence=()=>refreshCloud(true);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);
