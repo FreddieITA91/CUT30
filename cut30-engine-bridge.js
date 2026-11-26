@@ -22,7 +22,7 @@
   async function refreshCloud(silent=false){
     if(busy||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
     busy=true;
-    const sourceSheet=state.prefs.sheetId;
+    const sourceSheet=state.prefs.sheetId,readStarted=Date.now();
     try{
       const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
       const end={Carichi:'J',Valutazioni:'L',AnalisiAuto:'P'};
@@ -40,6 +40,7 @@
       if(!Array.isArray(loadValues)||!loadValues.length||headers.Carichi.some((k,i)=>loadValues[0][i]!==k))throw Error('Schema Carichi inatteso: storico non verificato');
       if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
       cache.Carichi=parseTable(loadValues);
+      window.cut30SetLoadEvidence?.(cache.Carichi,readStarted,sourceSheet);
       cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
       if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
@@ -50,7 +51,6 @@
       }catch{cache.CicloAuto=[];}
       if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
       loadedAt=Date.now();
-      window.cut30SetLoadEvidence?.(cache.Carichi,loadedAt,sourceSheet);
       if(engine)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
     }catch(err){console.error('CUT30 Engine refresh:',err);if(!silent)toast('Aggiornamento motore non riuscito: '+err.message);}
@@ -534,7 +534,6 @@
     try{
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       logEngine=await import('./engine/workout-log.mjs');
-      window.cut30RefreshLoadEvidence=()=>refreshCloud(true);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
       document.addEventListener('submit',onSubmit,true);

@@ -8,9 +8,50 @@
   const uniqueCompleted=()=>{const m=new Map();for(const x of state.tables.Allenamenti.filter(isTraining))m.set(x.data,x);return[...m.values()]};
   const lastDays=(count=7)=>Array.from({length:count},(_,i)=>shiftDate(localDate(),i-count+1));
   const mSteps=()=>{const map=new Map();for(const x of state.tables.Misure||[])if(n(x.passi_giornalieri)>0)map.set(x.data,Math.max(n(x.passi_giornalieri),n(map.get(x.data))));return map};
-  let trackerEngine=null,selectedPeriod="week",confirmedPlans=[],loadEvidence={rows:[],available:false,sheetId:null,at:0};
+  let trackerEngine=null,selectedPeriod="week",confirmedPlans=[],loadEvidence={rows:[],available:false,sheetId:null,at:0,status:'idle',error:''},loadFlight=null;
+  let loadModule=null;
   window.cut30SetConfirmedPlans=rows=>{confirmedPlans=Array.isArray(rows)?rows:[];};
-  window.cut30SetLoadEvidence=(rows,at,sheetId)=>{loadEvidence={rows:Array.isArray(rows)?rows:[],available:Array.isArray(rows),sheetId,at};};
+  window.cut30SetLoadEvidence=(rows,at,sheetId)=>{
+    if(sheetId!==state.prefs?.sheetId||!Array.isArray(rows))return;
+    if(loadEvidence.sheetId===sheetId&&loadEvidence.at>at)return;
+    loadEvidence={rows,available:true,sheetId,at,status:'ready',error:''};
+  };
+  function redrawCoverage(){if(['dashboard','progress'].includes(currentPage)&&trackerEngine)render();}
+  async function loadMuscleHistory({interactive=false,force=false}={}){
+    const sheetId=state.prefs?.sheetId;
+    if(!token||Date.now()>tokenExpires-30000){
+      loadEvidence={...(loadEvidence.sheetId===sheetId?loadEvidence:{rows:[],available:false,at:0}),sheetId,status:'disconnected',error:'Accesso Google non attivo'};
+      redrawCoverage();
+      if(interactive)connectGoogle();
+      return null;
+    }
+    if(loadFlight?.sheetId===sheetId)return loadFlight.promise;
+    if(!force&&loadEvidence.sheetId===sheetId&&loadEvidence.available&&Date.now()-loadEvidence.at<60000)return loadEvidence.rows;
+    const previous=loadEvidence.sheetId===sheetId?loadEvidence:{rows:[],available:false,at:0},started=Date.now();
+    loadEvidence={...previous,sheetId,status:'loading',error:''};
+    redrawCoverage();
+    const promise=(async()=>{
+      try{
+        const mod=await (loadModule??=import('./engine/load-evidence.mjs'));
+        let timeout;let rows;
+        try{rows=await Promise.race([mod.readLoads(googleApi),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Tempo di lettura Carichi scaduto: riprova')),15000);})]);}finally{clearTimeout(timeout);}
+        if(sheetId!==state.prefs?.sheetId)return null;
+        // A save verified while the read was in flight is newer evidence.
+        if(loadEvidence.sheetId===sheetId&&loadEvidence.at>started)return loadEvidence.rows;
+        window.cut30SetLoadEvidence(rows,Date.now(),sheetId);
+        return rows;
+      }catch(err){
+        if(sheetId===state.prefs?.sheetId&&loadEvidence.at<=started){
+          loadEvidence={...previous,sheetId,status:!token?'disconnected':'error',error:String(err?.message||err).slice(0,180)};
+          loadModule=null;
+          if(interactive)toast('Carichi: '+loadEvidence.error);
+        }
+        return null;
+      }finally{if(loadFlight?.sheetId===sheetId)loadFlight=null;redrawCoverage();}
+    })();
+    loadFlight={sheetId,promise};return promise;
+  }
+  window.cut30RefreshLoadEvidence=()=>loadMuscleHistory({force:true});
   function aggregates(period=selectedPeriod){
     if(!trackerEngine)return null;
     return trackerEngine.buildPeriodTracker({today:localDate(),period,tables:state.tables,confirmedPlans,loadEvidence:loadEvidence.sheetId===state.prefs?.sheetId?loadEvidence:{rows:[],available:false},programFor,targetsFor,stepsGoal:n(cfg("passi_giorno"))||12000,weeklyCardioGoal:n(cfg("obiettivo_cardio_sett"))||300});
@@ -123,25 +164,25 @@
     return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Alimentazione · '+periodLabel(a)+'</span><h2>Obiettivi nutrizionali</h2></div><a href="#nutrition" data-nav="nutrition" class="cx-link">Diario</a></div>'+Object.entries(a.nutrition).map(([k,m])=>'<div class="cx-macro-line"><div><span>'+labels[k]+'</span><b>'+display(m.actual)+' / '+display(m.expected)+' '+(k==='kcal'?'kcal':'g')+'</b></div>'+track(m.actual||0,m.expected||1,'',true)+'<small>Totale periodo: '+display(m.full)+'</small></div>').join('')+'<p class="cx-disclaimer">Registrazioni presenti in '+a.nutritionDays+'/'+a.elapsedDays+' giorni. Un giorno senza diario non dimostra assunzione nulla.</p></section>';
   }
   function muscleSummary(a){
-    const muscle=a.muscles,evidence=a.muscleEvidence;
+    const muscle=a.muscles,evidence=a.muscleEvidence,source=loadEvidence.sheetId===state.prefs?.sheetId?loadEvidence:{status:'idle',error:''};
     const order=["Petto","Schiena","Spalle","Braccia","Quadricipiti","Posteriori","Polpacci","Core"];
     const total=order.reduce((sum,g)=>sum+muscle[g].working,0),planned=order.reduce((sum,g)=>sum+muscle[g].planned,0),legacy=order.reduce((sum,g)=>sum+muscle[g].unclassified,0);
-    const metric=g=>{const v=muscle[g],status=v.status,pc=v.percent===null?'N/D':v.percent+'%';
-      return '<div class="cx-muscle-item ms-'+status+'"><div class="ms-line"><strong>'+h(g)+'</strong><span class="ms-pct">'+pc+(v.partial&&v.percent!==null?'*':'')+'</span></div>'+
-       '<div class="ms-series"><b>'+(evidence.available?v.working:'—')+'</b> / '+v.planned+' serie allenanti <small>· '+v.expected+' previste a oggi</small></div>'+
-       '<div class="ms-track" aria-label="'+h(g)+' '+pc+'"><i style="width:'+Math.min(100,v.percent??0)+'%"></i></div>'+
-       (v.unclassified?'<small class="ms-note">'+v.unclassified+' serie storiche non classificate · '+v.recorded+' registrate totali'+(v.recordedPercent===null?'':' ('+v.recordedPercent+'% del piano, tipo non verificato)')+'</small>':'')+
-       (v.checkedProxy&&v.missing?'<small class="ms-note">Spunte storiche presenti; volume non ricostruito.</small>':'')+
+    const metric=g=>{const v=muscle[g],status=v.displayStatus,pc=v.displayPercent===null?'N/D':v.displayPercent+'%';
+      return '<div class="cx-muscle-item ms-'+status+'"><div class="ms-line"><strong>'+h(g)+'</strong><span class="ms-pct">'+pc+(v.partial&&v.displayPercent!==null?'*':'')+'</span></div>'+
+       '<div class="ms-series"><b>'+(evidence.available?v.recorded:'—')+'</b> / '+v.planned+' serie registrate <small>· '+v.expected+' previste a oggi</small></div>'+
+       '<div class="ms-track" aria-label="'+h(g)+' '+pc+'"><i style="width:'+Math.min(100,v.displayPercent??0)+'%"></i></div>'+
+       (v.unclassified?'<small class="ms-note">'+v.unclassified+' non classificate · '+v.working+' allenanti verificate'+'</small>':'')+
+       (v.checkedExercises?'<small class="ms-note">'+v.checkedExercises+' esercizi confermati da checklist (senza stima di serie).</small>':'')+
        (v.secondary?'<small class="ms-note">'+v.secondary+' coinvolgimenti indiretti</small>':'')+
        (v.missing?'<small class="ms-note">Dettaglio mancante per '+v.missing+' esercizi</small>':'')+
        (v.conflicts?'<small class="ms-note">'+v.conflicts+' serie in conflitto</small>':'')+'</div>';};
-    return '<section class="cx-card cx-muscle-card" id="muscle-coverage"><div class="cx-head"><div><span class="cx-kicker">TRAIN / '+periodLabel(a)+'</span><h2>Copertura muscolare</h2></div><button type="button" class="cx-ghost-action ms-refresh" data-cut-refresh aria-label="Aggiorna serie">'+icon("refresh")+'</button></div>'+
-      '<div class="ms-overview"><div><strong>'+ (evidence.available?total+legacy:'—') +'</strong><span> serie registrate</span><small>'+ (evidence.available?total:'—') +' / '+planned+' allenanti · '+legacy+' non classificate</small></div><span class="ms-data">'+(evidence.available?'Storico '+(loadEvidence.at?new Date(loadEvidence.at).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):'caricato'):'Storico da caricare')+'</span></div>'+
+    return '<section class="cx-card cx-muscle-card" id="muscle-coverage"><div class="cx-head"><div><span class="cx-kicker">TRAIN / '+periodLabel(a)+'</span><h2>Copertura muscolare</h2></div><button type="button" class="cx-ghost-action ms-refresh" data-muscle-refresh aria-label="Aggiorna serie" '+(source.status==='loading'?'disabled':'')+'>'+icon("refresh")+'</button></div>'+
+      '<div class="ms-overview"><div><strong>'+ (evidence.available?total+legacy:'—') +'</strong><span> serie registrate</span><small>'+ (evidence.available?total:'—') +' / '+planned+' allenanti · '+legacy+' non classificate</small></div><span class="ms-data">'+(source.status==='loading'?'Caricamento…':source.status==='error'?'Errore lettura':source.status==='disconnected'?'Google non collegato':evidence.available?'Storico '+(source.at?new Date(source.at).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):'caricato'):'In attesa')+'</span></div>'+
       '<div class="cx-muscle-mini">'+anatomySvg(muscle,true)+'</div><div class="ms-legend"><span class="ms-zero">Non registrato</span><span class="ms-partial">Parziale</span><span class="ms-goal">Obiettivo</span><span class="ms-over">Oltre</span><span class="ms-unknown">N/D</span></div>'+
       '<div class="cx-muscle-summary">'+order.map(metric).join('')+'</div>'+
-      '<p class="cx-disclaimer">Totale registrato = allenanti + non classificate, escluso riscaldamento. Percentuale = serie allenanti / obiettivo dell’intero periodo. N/D = informazione insufficiente o nessun obiettivo. * = dato parziale. Le serie non classificate, il riscaldamento e i coinvolgimenti indiretti non aumentano la percentuale. Le spunte storiche non sono misure di volume.</p>'+
+      '<p class="cx-disclaimer">Totale registrato = allenanti + non classificate, escluso riscaldamento. Percentuale = serie registrate (allenanti + non classificate) / obiettivo dell’intero periodo. * = dettaglio parziale o serie non classificate. Il numero di allenanti verificate è distinto; riscaldamento e coinvolgimenti indiretti esclusi. Le spunte storiche non sono misure di volume.</p>'+
       (evidence.unmatched||evidence.invalid||evidence.conflicts?'<p class="ms-warning">Da riconciliare: '+evidence.unmatched+' record non associati, '+evidence.invalid+' non validi, '+evidence.conflicts+' conflitti. Nessuna serie inventata.</p>':'')+
-      (!evidence.available?'<p class="ms-warning">Connetti Google e aggiorna per leggere Carichi. Nessun dato mancante è interpretato come zero.</p>':'')+'</section>';
+      (source.status==='error'||source.status==='disconnected'?'<p class="ms-warning" role="status">'+h(source.error)+(evidence.available?' · Ultimo dato disponibile conservato.':'')+'</p>':'')+(!evidence.available&&source.status!=='loading'?'<button class="btn btn-quiet" type="button" data-muscle-refresh>'+(source.status==='disconnected'?'Collega Google':'Riprova caricamento')+'</button>':'')+'</section>';
   }
   function fullDashboard(){
     const a=aggregates(),xp=makeXp();
@@ -152,9 +193,9 @@
       '<details class="cx-card cx-report-details"><summary>Dettaglio giornaliero e previsioni</summary>'+dailyPlanCard(a)+'</details></div>';
   }
   function anatomySvg(groups,small=false){
-    const val=g=>groups[g]?.percent??null;
+    const val=g=>groups[g]?.displayPercent??null;
     const fills={unknown:"#555b57",none:"#555b57",zero:"#303632",partial:"#e9b84e",goal:"#bafa4d",over:"#f48a42"};
-    const part=(group,d)=>{const v=groups[group]||{},status=v.status||'unknown';return '<path data-muscle="'+group+'" d="'+d+'" fill="'+(fills[status]||fills.unknown)+'" opacity="'+(status==='unknown'?'.72':'1')+'"><title>'+group+': '+(val(group)===null?'N/D':val(group)+'%')+'</title></path>';};
+    const part=(group,d)=>{const v=groups[group]||{},status=v.displayStatus||'unknown';return '<path data-muscle="'+group+'" d="'+d+'" fill="'+(fills[status]||fills.unknown)+'" opacity="'+(status==='unknown'?'.72':'1')+'"><title>'+group+': '+(val(group)===null?'N/D':val(group)+'%')+'</title></path>';};
     const figure=(back=false)=>{
       const torso='<path class="cx-body-base" d="M75 76 C58 73 47 83 45 101 L48 142 59 171 61 195 86 216 111 195 114 171 125 142 128 101 C124 81 110 73 97 76 Z"/>';
       const head='<path class="cx-body-base" d="M67 29 Q86 7 105 29 L103 50 Q98 68 93 69 L93 81 79 81 79 69 Q69 64 68 51 Z"/>';
@@ -240,16 +281,17 @@
   }
   function startup(){
     document.addEventListener("click",e=>{
+      const muscleBtn=e.target.closest("[data-muscle-refresh]");if(muscleBtn){e.preventDefault();e.stopImmediatePropagation();loadMuscleHistory({interactive:true,force:true});return;}
       const selector=e.target.closest("[data-cut-period]");
       if(selector){e.preventDefault();selectedPeriod=selector.dataset.cutPeriod;render();return;}
       const btn=e.target.closest("[data-cut-refresh]");
       if(!btn)return;
-      e.preventDefault();e.stopImmediatePropagation();refreshCloud(false);window.cut30RefreshLoadEvidence?.();
+      e.preventDefault();e.stopImmediatePropagation();refreshCloud(false);loadMuscleHistory({interactive:false,force:true});
     },true);
     // La lettura periodica non riscrive il Google Sheet.
-    window.setTimeout(()=>refreshCloud(true),650);
-    window.setInterval(()=>{if(document.visibilityState==="visible"&&Date.now()-lastRemoteCheck>300000)refreshCloud(true);},120000);
-    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRemoteCheck>120000)refreshCloud(true);});
+    window.setTimeout(()=>{refreshCloud(true);loadMuscleHistory({force:true});},650);
+    window.setInterval(()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>300000)refreshCloud(true);loadMuscleHistory();}},60000);
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>120000)refreshCloud(true);loadMuscleHistory();}});
     import("./engine/period-tracker.mjs").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
     render();
   }
