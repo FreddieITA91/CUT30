@@ -371,3 +371,21 @@ html,body,.shell{background:var(--bg);color:var(--text)}.sidebar,.bottom-nav{bac
 .wl-final-result strong{font-size:29px;line-height:1.1;color:#c3f350;font-variant-numeric:tabular-nums}
 .wl-final-result span,.wl-result-note{font-size:11px;color:#b4bfb0;line-height:1.4}
 .wl-rating-dots{display:flex;gap:3px;margin-top:3px}.wl-rating-dots i{height:5px;flex:1;border-radius:4px;background:#495044}.wl-rating-dots i.filled{background:#c3f350}
+
+/* 3.11: visible cardio diary separate from planned work and input. */
+.wl-cardio-registered{border:1px solid #41493a;background:#20251c;border-radius:12px;padding:12px;margin:10px 0;min-width:0}
+.wl-cardio-registered .wl-cardio-title{margin-bottom:9px}
+.wl-cardio-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:9px}
+.wl-cardio-totals>div,.wl-cardio-record-metrics>div{padding:7px;background:#2b3226;border-radius:7px;min-width:0;overflow-wrap:anywhere}
+.wl-cardio-totals small,.wl-cardio-record-metrics small,.wl-cardio-record-head small{display:block;color:#aab3a3;font-size:10px;margin-bottom:3px}
+.wl-cardio-totals b,.wl-cardio-record-metrics b{font-size:12px}
+.wl-cardio-record{padding:9px 0;border-top:1px solid #41493a}
+.wl-cardio-record-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.wl-cardio-record-head>div{flex:1;min-width:100px}.wl-cardio-record-head>div>b{font-size:14px}
+.wl-cardio-record-head>strong{font-size:17px;color:#c3f350;white-space:nowrap}
+.wl-cardio-record-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:8px}
+.wl-cardio-empty{display:block;font-size:11px;color:#aab3a3;line-height:1.45;margin:7px 0}
+.wl-cardio-history{border-top:1px solid #41493a;padding-top:9px;margin-top:10px}
+.wl-cardio-history summary{cursor:pointer;font-size:12px;font-weight:700}
+.wl-cardio-history button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;color:inherit;border:0;border-bottom:1px solid #41493a;padding:9px 0;font:inherit;font-size:12px;cursor:pointer}
+.wl-cardio-history button b{white-space:nowrap;color:#c3f350}

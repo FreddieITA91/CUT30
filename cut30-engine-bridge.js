@@ -126,36 +126,49 @@
     const meta=await googleApi('?fields=sheets.properties.title');
     const exists=meta.sheets?.some(s=>s.properties.title==='CardioSegmenti');
     if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante lettura cardio');
-    if(!exists){cache.CardioSegmenti=[];cardioLoaded=true;window.cut30SetCardioEvidence?.([],started,sheet);return false;}
+    if(!exists){cache.CardioSegmenti=[];cardioSource=sheet;cardioLoaded=true;window.cut30SetCardioEvidence?.([],started,sheet);return false;}
     const r=await googleApi('/values/'+encodeURIComponent("'CardioSegmenti'!A:O")+'?valueRenderOption=UNFORMATTED_VALUE');
     const values=r.values||[];
     if(values.length&&cardioEngine.CARDIO_HEADERS.some((k,i)=>values[0][i]!==k))throw new Error('Schema CardioSegmenti inatteso');
     if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante lettura cardio');
-    cache.CardioSegmenti=parseTable(values);cardioLoaded=true;window.cut30SetCardioEvidence?.(cache.CardioSegmenti,started,sheet);return true;
+    cache.CardioSegmenti=parseTable(values);cardioSource=sheet;cardioLoaded=true;window.cut30SetCardioEvidence?.(cache.CardioSegmenti,started,sheet);return true;
+  }
+  const cardioLabels={tapis:'Tapis roulant',piscina:'Nuoto / piscina',cyclette:'Cyclette',ellittica:'Ellittica',camminata:'Camminata',corsa:'Corsa',altro:'Altra attività'};
+  let cardioSource=null;
+  const cardioReady=()=>cardioLoaded&&cardioSource===state.prefs.sheetId;
+  function cardioRegistered(){
+    const day=selectedDate,workout=trainingFor(day),summary=flowEngine.sessionMetrics(workout);
+    if(!cardioReady())return '<section class="wl-cardio-registered"><div class="wl-cardio-title"><b>Cardio registrato</b></div><p class="wl-cardio-empty">Dettaglio del diario non disponibile. '+(summary.cardio!==null?'Durata complessiva registrata: '+h(summary.cardio)+' min. ':'')+'Aggiorna o collega Google Sheets.</p></section>';
+    let s;try{s=cardioEngine.summarizeCardioSegments(cache.CardioSegmenti,day);}catch(err){return '<section class="wl-cardio-registered"><b>Cardio registrato</b>'+formatWarn(err.message)+'</section>';}
+    const fmt=(v,suffix='',complete=true)=>v==null?'—':fmtN(v,2)+suffix+(complete?'':'*');
+    const list=s.rows.map(r=>{
+      const metrics=[['Distanza',fmt(r.distanza_km,' km')],['Velocità',fmt(r.velocita_kmh,' km/h')],['Pendenza',fmt(r.pendenza_pct,'%')],['Calorie',fmt(r.kcal_attive,' kcal')],['FC media',fmt(r.fc_media,' bpm')],['FC max',fmt(r.fc_max,' bpm')],['Passi tapis',fmt(r.passi_tapis)],['Passo /100 m',r.passo_sec_100m==null?'—':Math.floor(r.passo_sec_100m/60)+':'+String(r.passo_sec_100m%60).padStart(2,'0')]].filter(x=>x[1]!=='—');
+      return '<article class="wl-cardio-record"><div class="wl-cardio-record-head"><div><small>SEGMENTO '+r.numero_segmento+' · '+h(r.programma)+'</small><b>'+h(cardioLabels[r.modalita]||r.modalita)+'</b></div><strong>'+fmt(r.durata_min,' min')+'</strong><button type="button" class="btn btn-quiet btn-sm" data-wl-cardio-edit="'+h(r.id)+'" '+(!connected()||day>localDate()||r.programma!==programFor(day)?'disabled':'')+'>Modifica</button></div>'+(metrics.length?'<div class="wl-cardio-record-metrics">'+metrics.map(([k,v])=>'<div><small>'+h(k)+'</small><b>'+h(v)+'</b></div>').join('')+'</div>':'<small class="wl-cardio-empty">Solo durata registrata.</small>')+'</article>';
+    }).join('');
+    const days=[...new Set(cache.CardioSegmenti.filter(r=>r.data&&r.data!==day&&r.data<=localDate()).map(r=>r.data))].sort().reverse();
+    const history=days.length?'<details class="wl-cardio-history" data-wl-disclosure="cardio-history" '+(disclosureOpen('cardio-history')?'open':'')+'><summary>Storico cardio · '+days.length+' giorni</summary>'+days.map(d=>{try{const x=cardioEngine.summarizeCardioSegments(cache.CardioSegmenti,d);return '<button type="button" data-wl-cardio-day="'+h(d)+'"><span>'+h(dayLabel(d,{day:'numeric',month:'short',year:'numeric'}))+' · '+h(Object.keys(x.modes).map(m=>cardioLabels[m]||m).join(', '))+'</span><b>'+fmt(x.minutes,' min')+'</b></button>';}catch{return '';}}).join('')+'</details>':'';
+    return '<section class="wl-cardio-registered"><div class="wl-cardio-title"><div><b>Cardio registrato</b><small>'+s.rows.length+' segmenti · '+h(dayLabel(day,{day:'numeric',month:'long'}))+'</small></div><strong>'+(s.rows.length?fmt(s.minutes,' min'):summary.cardio!==null?fmt(summary.cardio,' min'):'—')+'</strong></div>'+
+      (s.rows.length?'<div class="wl-cardio-totals"><div><small>Distanza</small><b>'+fmt(s.distance.value,' km',s.distance.complete)+'</b></div><div><small>Calorie</small><b>'+fmt(s.kcal.value,' kcal',s.kcal.complete)+'</b></div><div><small>FC media</small><b>'+fmt(s.hr_mean,' bpm',s.hr_coverage_minutes===s.minutes)+'</b></div></div>'+list+'<small class="wl-cardio-empty">* Dato parziale. I segmenti sono già parte della seduta: non sommare ai totali giornalieri.</small>':'<p class="wl-cardio-empty">'+(summary.cardio!==null&&summary.cardio>0?'Nel diario è registrato un totale di '+h(summary.cardio)+' min, senza dettaglio per attività.':'Nessun segmento cardio registrato per questa giornata.')+'</p>')+history+'</section>';
   }
   function segmentPanel(){
-    let s=null;
-    try{s=cardioEngine.summarizeCardioSegments(cache.CardioSegmenti,selectedDate);}catch(err){return formatWarn(err.message);}
+    let s;try{s=cardioEngine.summarizeCardioSegments(cardioReady()?cache.CardioSegmenti:[],selectedDate);}catch(err){return formatWarn(err.message);}
     const next=Math.max(0,...s.rows.map(r=>r.numero_segmento))+1;
-    const field=(label,name,step='1')=>'<div class="field"><label>'+label+'</label><input name="'+name+'" type="number" step="'+step+'" min="0"></div>';
-    const metric=(value,suffix,complete=true)=>value===null?'—':fmtN(value,2)+suffix+(complete?'':' (parziale)');
+    const field=(label,name,step='1')=>'<div class="field"><label>'+label+'</label><input name="'+name+'" type="number" step="'+step+'" min="'+(name==='pendenza_pct'?-30:0)+'"></div>';
     return '<section class="wl-cardio-log">'+
-      (!cardioLoaded?'<p class="sm muted">Dettaglio cloud non caricato.</p>':'<p class="sm">Totale segmenti: '+s.minutes+' min · '+metric(s.distance.value,' km',s.distance.complete)+' · '+metric(s.kcal.value,' kcal',s.kcal.complete)+' · FC media '+metric(s.hr_mean,' bpm',s.hr_coverage_minutes===s.minutes)+' (ponderata) · FC max '+metric(s.hr_max,' bpm',s.hr_max_complete)+'</p>')+
-      s.rows.map(r=>'<div class="entry"><div class="entry-main"><strong>#'+r.numero_segmento+' '+h(r.modalita)+' · '+r.durata_min+' min</strong><small>'+metric(r.distanza_km,' km')+' · '+metric(r.kcal_attive,' kcal')+' · FC '+metric(r.fc_media,'')+'/'+metric(r.fc_max,' bpm')+(r.passo_sec_100m===null?'':' · '+Math.floor(r.passo_sec_100m/60)+':'+String(r.passo_sec_100m%60).padStart(2,'0')+'/100 m')+'</small></div></div>').join('')+
       '<form id="cut30-cardio-form" class="stack"><div class="form-row"><div class="field"><label>Numero segmento</label><input name="numero_segmento" type="number" min="1" max="99" value="'+next+'" required></div><div class="field"><label>Attività</label><select name="modalita">'+cardioEngine.MODES.map(m=>'<option>'+h(m)+'</option>').join('')+'</select></div>'+
       '<div class="field"><label>Durata (min)</label><input name="durata_min" type="number" step="0.1" min="0.1" max="600" required></div>'+
       field('Distanza (km)','distanza_km','0.001')+field('Velocità (km/h)','velocita_kmh','0.1')+field('Nuoto: secondi / 100 m','passo_sec_100m')+field('Tapis: pendenza (%)','pendenza_pct','0.1')+field('Calorie tracker','kcal_attive','0.1')+field('FC media (bpm)','fc_media')+field('FC max (bpm)','fc_max')+field('Passi tapis','passi_tapis')+
-      '</div><button class="btn" type="submit" '+(!connected()?'disabled':'')+'>Salva segmento</button><p class="tiny muted">Lascia vuoti i dati non misurati. Per correggere un segmento usa lo stesso numero e conferma. Il riepilogo non aggiorna automaticamente Allenamenti: verifica la copertura e inserisci il totale giornaliero una sola volta.</p></form></section>';
+      '</div><button class="btn" type="submit" '+(!connected()||selectedDate>localDate()?'disabled':'')+'>Salva segmento</button><p class="tiny muted">Lascia vuoti i dati non misurati. Per correggere un segmento usa lo stesso numero e conferma. Il riepilogo non aggiorna automaticamente Allenamenti: verifica la copertura e inserisci il totale giornaliero una sola volta.</p></form></section>';
   }
   async function submitCardio(form){
     if(!connected())throw new Error('Collega Google prima di salvare');
-    const date=selectedDate,program=programFor(date);
+    const date=selectedDate,program=programFor(date),sheet=state.prefs.sheetId;const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};if(date>localDate())throw Error('Non puoi registrare cardio futuro');
     const rec=cardioEngine.validateCardioSegment({...Object.fromEntries(new FormData(form)),data:date,programma:program,updated_at:new Date().toISOString()});
-    const exists=await loadCardio();
+    const exists=await loadCardio();assertSource();
     if(!exists)await googleApi(':batchUpdate','POST',{requests:[{addSheet:{properties:{title:'CardioSegmenti',gridProperties:{rowCount:1000,columnCount:15,frozenRowCount:1}}}}]});
     const range="'CardioSegmenti'!A:O";
     const read='/values/'+encodeURIComponent(range)+'?valueRenderOption=UNFORMATTED_VALUE';
-    const before=(await googleApi(read)).values||[];
+    const before=(await googleApi(read)).values||[];assertSource();
     const head=cardioEngine.CARDIO_HEADERS;
     if(before.length&&head.some((k,i)=>before[0][i]!==k))throw new Error('Schema inatteso: nessuna modifica');
     if(!before.length)await googleApi('/values/'+encodeURIComponent("'CardioSegmenti'!A1:O1")+'?valueInputOption=RAW','PUT',{values:[head]});
@@ -163,16 +176,17 @@
     if(matches.length>1)throw new Error('ID duplicato: correggere il diario prima di salvare');
     const body={values:[head.map(k=>rec[k]??'')]};
     if(matches.length){
+      if(String(before[matches[0]][2])!==program)throw Error('Segmento associato a un programma diverso: nessuna modifica');
       if(!confirm('Sostituire il segmento #'+rec.numero_segmento+' di '+date+'?'))return;
       const n=matches[0]+1;
-      const current=(await googleApi(read)).values||[];
+      const current=(await googleApi(read)).values||[];assertSource();
       if(JSON.stringify(current[n-1])!==JSON.stringify(before[n-1]))throw new Error('Segmento modificato nel cloud: aggiorna prima di correggere');
       await googleApi('/values/'+encodeURIComponent("'CardioSegmenti'!A"+n+':O'+n)+'?valueInputOption=RAW','PUT',body);
     }else await googleApi('/values/'+encodeURIComponent(range)+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',body);
     const after=(await googleApi(read)).values||[];
     const saved=after.filter((r,i)=>i>0&&r[0]===rec.id);
     if(saved.length!==1||head.some((k,i)=>String(saved[0][i]??'')!==String(rec[k]??'')))throw new Error('Verifica scrittura non riuscita; aggiorna prima di riprovare');
-    await loadCardio();cardioDrafts.delete(disclosureKey('cardio'));render();toast('Segmento cardio salvato e verificato');
+    assertSource();await loadCardio();cardioDrafts.delete(JSON.stringify([sheet,date,program,'cardio']));render();toast('Segmento cardio salvato e verificato');
   }
   function learningPanel(suggest){
     if(!suggest||suggest.status==='giornata_gia_conclusa')return '';
@@ -510,9 +524,9 @@
   }
   function trainingPanel(){
     const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>exerciseDone(x,ex)).length;
-    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.10.0</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
+    return '<section class="panel wl-shell"><div class="wl-heading"><div><span class="wl-kicker">CUT30 / TRAINING LOG · 3.11.0</span><h2>'+h(program)+'</h2><p>'+h(dayLabel(selectedDate,{weekday:'long',day:'numeric',month:'long'}))+' · '+(isDone(selectedDate)?'Seduta conclusa':'Sessione da svolgere')+'</p></div><div class="wl-count"><b>'+done+'/'+ex.length+'</b><small>ESERCIZI</small></div></div>'+
       briefing(program,suggest)+'<div class="progress wl-session-progress"><span style="width:'+(ex.length?done/ex.length*100:0)+'%"></span></div><div class="wl-toolbar"><span>Serie verificate · storico privato</span><button type="button" class="btn btn-quiet btn-sm" data-cut30-refresh>↻ Aggiorna</button></div>'+
-      livePanel(ex)+'<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+cardioPrescription(suggest)+'<details class="wl-advanced wl-cardio-details" data-wl-disclosure="cardio" '+(disclosureOpen('cardio')?'open':'')+'><summary>Registra cardio effettivo</summary>'+segmentPanel()+'</details>'+sessionSummary(ex,done,suggest)+'</section>';
+      livePanel(ex)+'<div class="wl-list">'+ex.map(exerciseRow).join('')+'</div>'+cardioPrescription(suggest)+cardioRegistered()+'<details class="wl-advanced wl-cardio-details" data-wl-disclosure="cardio" '+(disclosureOpen('cardio')?'open':'')+'><summary>Aggiungi / modifica cardio</summary>'+segmentPanel()+'</details>'+sessionSummary(ex,done,suggest)+'</section>';
   }
   function sessionSummary(ex,done,suggest){
     const closed=isDone(selectedDate),ready=ex.length>0&&done===ex.length;
@@ -676,7 +690,7 @@
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.10.0');
+      const mod=await import('./engine/delete-record.mjs?v=3.11.0');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
       assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
       const remaining=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,items),engine.readSetEffort);
@@ -796,6 +810,8 @@
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
     const history=e.target.closest('[data-wl-history-day]');if(history){if(setSaving)return;selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){e.preventDefault();if(logExercises().some(x=>x.id===toggle.dataset.wlToggle)){toggleExercise(selectedDate,toggle.dataset.wlToggle);render();}return;}
+    const cardDay=e.target.closest('[data-wl-cardio-day]');if(cardDay){if(setSaving)return;selectedDate=cardDay.dataset.wlCardioDay;render();document.querySelector('.wl-cardio-registered')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
+    const cardEdit=e.target.closest('[data-wl-cardio-edit]');if(cardEdit){if(!cardioReady()||!connected())return;const r=cardioEngine.summarizeCardioSegments(cache.CardioSegmenti,selectedDate).rows.find(x=>x.id===cardEdit.dataset.wlCardioEdit);if(!r||r.programma!==programFor(selectedDate))return;cardioDrafts.set(disclosureKey('cardio'),Object.fromEntries(cardioEngine.CARDIO_HEADERS.filter(k=>!['id','data','programma','updated_at'].includes(k)).map(k=>[k,r[k]??''])));disclosureState.add(disclosureKey('cardio'));render();document.querySelector('#cut30-cardio-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     if(e.target.closest('[data-wl-close-session]')){if(selectedDate>localDate()||setSaving)return;closureOpen.add(disclosureKey('closure'));render();document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     if(e.target.closest('[data-wl-cancel-close]')){closureOpen.delete(disclosureKey('closure'));sessionDrafts.delete(disclosureKey('closure'));render();return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
@@ -826,7 +842,7 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.10.0');restNode();setInterval(tickRest,250);setInterval(tickLive,1000);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.11.0');restNode();setInterval(tickRest,250);setInterval(tickLive,1000);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
