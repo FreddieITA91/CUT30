@@ -300,7 +300,7 @@
     }finally{auditSaving=false;}
   }
   // One persistent in-page countdown, independent of workout re-renders.
-  let restEngine=null,restTimer=null,restAlerted=false,restAudio=null,restSound='idle',restWake=null,restWakePending=false;
+  let restEngine=null,restTimer=null,restAlerted=false,restDismissed=false,restCloseAt=0,restAudio=null,restSound='idle',restWake=null,restWakePending=false;
   function unlockRestAudio(){
     try{
       const Audio=window.AudioContext||window.webkitAudioContext;
@@ -316,10 +316,10 @@
     try{
       const t=restAudio.currentTime;
       for(let i=0;i<3;i++){
-        const o=restAudio.createOscillator(),g=restAudio.createGain(),start=t+i*.26;
+        const o=restAudio.createOscillator(),g=restAudio.createGain(),start=t+i*.34;
         o.type='sine';o.frequency.value=i===2?1046.5:784;
-        g.gain.setValueAtTime(.001,start);g.gain.exponentialRampToValueAtTime(.23,start+.025);g.gain.exponentialRampToValueAtTime(.001,start+.19);
-        o.connect(g);g.connect(restAudio.destination);o.start(start);o.stop(start+.21);
+        g.gain.setValueAtTime(.001,start);g.gain.exponentialRampToValueAtTime(.72,start+.025);g.gain.exponentialRampToValueAtTime(.001,start+.27);
+        o.connect(g);g.connect(restAudio.destination);o.start(start);o.stop(start+.29);
       }
       return true;
     }catch{restSound='blocked';return false;}
@@ -334,12 +334,12 @@
     let node=document.querySelector('#cut30-rest-timer');
     if(node)return node;
     node=document.createElement('aside');node.id='cut30-rest-timer';node.className='wl-rest-float';node.hidden=true;node.setAttribute('aria-label','Timer di recupero');
-    node.innerHTML='<div class="wl-rest-top"><div><b data-rest-title>Recupero</b><small data-rest-exercise></small></div><strong data-rest-time aria-label="Tempo rimanente"></strong></div><div class="wl-rest-track"><i data-rest-progress></i></div><div class="wl-rest-controls"><button type="button" data-rest-add>+30 s</button><button type="button" data-rest-audio>Suono</button><button type="button" data-rest-skip>Salta</button></div><small class="wl-rest-note" data-rest-note role="status"></small>';
+    node.innerHTML='<div class="wl-rest-top"><div><b data-rest-title>Recupero</b><small data-rest-exercise></small></div><strong data-rest-time aria-label="Tempo rimanente"></strong><button type="button" class="wl-rest-close" data-rest-close aria-label="Nascondi timer, avviso sonoro attivo" title="Nascondi timer">×</button></div><div class="wl-rest-track"><i data-rest-progress></i></div><div class="wl-rest-controls"><button type="button" data-rest-add>+30 s</button><button type="button" data-rest-audio>Suono</button><button type="button" data-rest-skip>Salta</button></div><small class="wl-rest-note" data-rest-note role="status"></small>';
     document.body.append(node);return node;
   }
   function paintRest(){
     if(!restEngine)return;
-    const node=restNode();node.hidden=!restTimer;document.body.classList.toggle('wl-rest-active',!!restTimer);
+    const node=restNode();node.hidden=!restTimer||restDismissed;document.body.classList.toggle('wl-rest-active',!!restTimer&&!restDismissed);
     if(!restTimer)return;
     const left=restEngine.remainingSeconds(restTimer,Date.now());
     node.querySelector('[data-rest-title]').textContent=restAlerted?'Recupero terminato':'Recupero';
@@ -354,28 +354,29 @@
   }
   function tickRest(){
     if(!restEngine||!restTimer)return;
+    if(restAlerted&&restCloseAt&&Date.now()>=restCloseAt){stopRest();return;}
     if(!restAlerted&&restEngine.remainingSeconds(restTimer,Date.now())===0){
       restAlerted=true;releaseRestWake();
-      const played=playRestSound();
+      const played=playRestSound();restCloseAt=Date.now()+(played?1100:250);
       try{navigator.vibrate?.([200,100,200]);}catch{}
       toast(played?'Recupero terminato':'Recupero terminato · audio non disponibile');
     }
     paintRest();
   }
-  function stopRest(){restTimer=null;restAlerted=false;releaseRestWake();paintRest();}
+  function stopRest(){restTimer=null;restAlerted=false;restDismissed=false;restCloseAt=0;releaseRestWake();paintRest();}
+  function dismissRest(){if(!restTimer)return;restDismissed=true;paintRest();}
   function beginRest(ex,rec){
-    restTimer=restEngine.startRecovery({exercise:ex,recordId:rec.id,date:rec.data,now:Date.now()});restAlerted=false;
+    restTimer=restEngine.startRecovery({exercise:ex,recordId:rec.id,date:rec.data,now:Date.now()});restAlerted=false;restDismissed=false;restCloseAt=0;
     paintRest();holdRestWake();
   }
   let logEngine, flowEngine, muscleEngine, guideUrl=null;
   const logFeedback=new Map();
-  const logDrafts=new Map(), logOpen=new Map(), sessionDrafts=new Map(), openManual=new Set();
+  const logDrafts=new Map(), logOpen=new Map(), sessionDrafts=new Map();
   const logItems=(items=logExercises())=>items.map(ex=>({id:ex.id,done:exerciseDone(ex,items)}));
   function exerciseDone(ex,items=logExercises()){return checkedExercise(ex,selectedDate,items)||logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort)>=ex.sets;}
   function setOpen(date,id){logOpen.set(date,id);}
-  function currentOpen(items){if(!logOpen.has(selectedDate))setOpen(selectedDate,flowEngine.initialOpen(logItems(items)));else if(items&&!openManual.has(selectedDate)&&logOpen.get(selectedDate)!==null){const rows=logItems(items);if(rows.find(x=>x.id===logOpen.get(selectedDate))?.done||!rows.some(x=>x.id===logOpen.get(selectedDate)))setOpen(selectedDate,flowEngine.initialOpen(rows));}return logOpen.get(selectedDate);}
-  function advanceOpen(date,id,items){if(logOpen.get(date)!==id)return false;openManual.delete(date);setOpen(date,flowEngine.nextOpen(items,id,id));return true;}
-  function revealNext(date){if(currentPage!=='training'||selectedDate!==date)return;const id=logOpen.get(date);const target=id?document.querySelector('[data-wl-row="'+id+'"]'):document.querySelector('.wl-session-end');target?.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
+  function currentOpen(items){const current=logOpen.get(selectedDate)??null;if(items&&current&&!items.some(x=>x.id===current))setOpen(selectedDate,null);return logOpen.get(selectedDate)??null;}
+  function collapseCompleted(date,id){if(logOpen.get(date)!==id)return false;setOpen(date,null);return true;}
   const logKey=(date,id)=>String(state.prefs.sheetId)+'|'+date+'|'+id;
   function logPlan(){
     try{const saved=cache.SchedeConfermate.find(x=>x.data===selectedDate);
@@ -463,7 +464,7 @@
     if(edit)values.serie=rec.numero_serie;
     for(const [k,v] of Object.entries(values))if(form.elements[k])form.elements[k].value=v;
     if(edit)form.dataset.editId=rec.id;else delete form.dataset.editId;
-    openManual.add(selectedDate);setOpen(selectedDate,ex.id);captureLog(form);render();document.querySelector('[data-wl-form="'+ex.id+'"] [name="kg"]')?.focus();
+    setOpen(selectedDate,ex.id);captureLog(form);render();document.querySelector('[data-wl-form="'+ex.id+'"] [name="kg"]')?.focus();
   }
   function ingredientRow(){
     return '<div class="cut30-ingredient-row form-row" style="margin:8px 0">'+
@@ -563,10 +564,10 @@
       publishLoads(parseTable(saved.allRows),sheet);
       const after=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,WORKOUTS[program]||[]),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
-      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq===logEngine.UNKNOWN_EQUIPMENT?'':eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
+      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq===logEngine.UNKNOWN_EQUIPMENT?'':eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});if(!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate)collapseCompleted(date,ex.id);
       try{if(restEngine&&date===selectedDate&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||(date===selectedDate&&logItems().some(x=>x.id!==ex.id&&!x.done)),exercise:ex}))beginRest(ex,rec);
       else if(!existing&&date===localDate())stopRest();}catch(err){console.warn('Timer non disponibile:',err);}
-      setSaving=false;toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
+      setSaving=false;toast('Serie salvata e verificata sul Google Sheet privato');render();
     }finally{setSaving=false;}
     // Optional reports update independently; never block the next series.
   }
@@ -580,7 +581,7 @@
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.7.4');
+      const mod=await import('./engine/delete-record.mjs?v=3.7.5');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
       assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
       const remaining=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,items),engine.readSetEffort);
@@ -591,7 +592,7 @@
         upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:'false',updated_at:now()});
       }
       const key=logKey(date,ex.id);if(logDrafts.get(key)?.editId===id)logDrafts.delete(key);
-      if(date===selectedDate){openManual.add(date);setOpen(date,ex.id);}
+      if(date===selectedDate){setOpen(date,ex.id);}
       toast('Serie eliminata e verificata');render();
       // Sync checklist changes; the session itself stays confirmed unless edited explicitly.
       if(before>=ex.sets&&remaining<ex.sets)await sync();
@@ -688,12 +689,13 @@
   }
   function onClick(e){
     if(e.target.closest('[data-action="finish-training"]')&&restTimer?.date===selectedDate&&isDone(selectedDate))stopRest();
+    if(e.target.closest('[data-rest-close]')){dismissRest();return;}
     if(e.target.closest('[data-rest-skip]')){stopRest();return;}
-    if(e.target.closest('[data-rest-add]')){if(restTimer){restTimer=restEngine.extendRecovery(restTimer,Date.now(),30);restAlerted=false;paintRest();holdRestWake();}return;}
+    if(e.target.closest('[data-rest-add]')){if(restTimer){restTimer=restEngine.extendRecovery(restTimer,Date.now(),30);restAlerted=false;restCloseAt=0;paintRest();holdRestWake();}return;}
     if(e.target.closest('[data-rest-audio]')){unlockRestAudio().then(ok=>{if(ok)playRestSound();paintRest();});return;}
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
     const history=e.target.closest('[data-wl-history-day]');if(history){if(setSaving)return;selectedDate=history.dataset.wlHistoryDay;render();return;}
-    const toggle=e.target.closest('[data-wl-toggle]');if(toggle){openManual.add(selectedDate);setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}
+    const toggle=e.target.closest('[data-wl-toggle]');if(toggle){setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}
     if(e.target.closest('[data-wl-session-data]')){document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
@@ -723,14 +725,14 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.4');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.5');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
       document.addEventListener('click',onClick);
       document.addEventListener('input',onInput);
       document.addEventListener('change',onInput);
-      document.addEventListener('change',e=>{const id=e.target.dataset?.exercise;if(id&&currentPage==='training'&&e.target.checked){const date=selectedDate,items=logItems().map(x=>x.id===id?{...x,done:true}:x);if(advanceOpen(date,id,items))requestAnimationFrame(()=>revealNext(date));}},true);
+      document.addEventListener('change',e=>{const id=e.target.dataset?.exercise;if(id&&currentPage==='training'&&e.target.checked){collapseCompleted(selectedDate,id);}},true);
       document.addEventListener('submit',e=>{if(e.target.id==='training-form'&&selectedDate<=localDate()&&e.target.checkValidity())sessionDrafts.delete(selectedDate);},true);
       render();
       setTimeout(()=>refreshCloud(true),1000);

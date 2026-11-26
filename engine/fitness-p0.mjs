@@ -11,13 +11,8 @@ export function activityRings(a){
  return [make('time','Tempo attivo',m.minutes,'min',!minutesKnown),make('sessions','Sedute',m.sessions,'',false),
    steps?make('steps','Passi',m.steps,'',a.stepDays<a.elapsedDays):make('cardio','Cardio',m.cardio,'min',!cardioKnown)];
 }
-export function initialOpen(items){return items.find(x=>!x.done)?.id??null;}
-export function nextOpen(items,current,completed){
- if(current!==completed)return current;
- const i=items.findIndex(x=>x.id===completed);
- if(i<0)return current;
- return items.slice(i+1).find(x=>!x.done)?.id??items.slice(0,i).find(x=>!x.done)?.id??null;
-}
+export function initialOpen(){return null;}
+export function nextOpen(items,current,completed){return current===completed?null:current;}
 export function toggleOpen(current,id){return current===id?null:id;}
 export function sessionMetrics(workout){
  const read=k=>{const v=workout?.[k];return v===null||v===undefined||String(v).trim()===''||!Number.isFinite(Number(v))||Number(v)<0?null:Number(v);};
