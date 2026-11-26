@@ -15,7 +15,7 @@ test('bridge countdown alerts once, extends, and stops without touching session 
  a.beginRest({name:'Panca',rest:'120 sec'},{id:'s1',data:'2026-11-26'});
  assert.equal(children.get('[data-rest-time]').textContent,'2:00');assert.equal(node.hidden,false);
  clock=121000;a.tickRest();a.tickRest();assert.equal(tones,3);assert.equal(vibrations,1);assert.equal(notices.length,1);
- assert.equal(children.get('[data-rest-title]').textContent,'Recupero terminato');assert.ok(gains.includes(.85));assert.deepEqual(waves,['square','square','square']);assert.deepEqual(frequencies,[1550,2050,1550]);assert.equal(sustained.filter(([v])=>v===.85).length,3);assert.ok(sustained.some(([v,t])=>v===.85&&t===.40));assert.ok(gains.every(v=>v<=1));
+ assert.equal(children.get('[data-rest-title]').textContent,'Recupero terminato');assert.ok(gains.includes(.90));assert.deepEqual(waves,['sine','sine','sine']);assert.deepEqual(frequencies,[1000,1250,1500]);assert.equal(sustained.filter(([v])=>v===.90).length,3);assert.ok(sustained.some(([v,t])=>v===.90&&t===.34));assert.ok(gains.every(v=>v<=1));
  clock+=1100;a.tickRest();assert.equal(node.hidden,false);
  clock+=600;a.tickRest();assert.equal(node.hidden,true);a.tickRest();assert.equal(tones,3);
  a.beginRest({name:'Panca',rest:'120 sec'},{id:'s2',data:'2026-11-26'});
