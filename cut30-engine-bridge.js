@@ -292,12 +292,12 @@
   function unlockRestAudio(){
     try{
       const Audio=window.AudioContext||window.webkitAudioContext;
-      if(!Audio){restSound='unavailable';return;}
+      if(!Audio){restSound='unavailable';return Promise.resolve(false);}
       restAudio??=new Audio();
       // Must be requested inside the user gesture, before the cloud write awaits.
       const p=restAudio.resume();
-      Promise.resolve(p).then(()=>{restSound=restAudio.state==='running'?'ready':'blocked';paintRest();}).catch(()=>{restSound='blocked';paintRest();});
-    }catch{restSound='unavailable';}
+      return Promise.resolve(p).then(()=>{restSound=restAudio.state==='running'?'ready':'blocked';paintRest();return restSound==='ready';}).catch(()=>{restSound='blocked';paintRest();return false;});
+    }catch{restSound='unavailable';return Promise.resolve(false);}
   }
   function playRestSound(){
     if(!restAudio||restAudio.state!=='running'){restSound='blocked';return false;}
@@ -338,7 +338,7 @@
     node.querySelector('[data-rest-skip]').textContent=restAlerted?'Chiudi':'Salta';
     node.querySelector('[data-rest-audio]').textContent=restAudio?.state==='running'?'Prova suono':'Attiva suono';
     const note=restAlerted?'Tempo scaduto. Riprendi quando sei pronto.':restAudio?.state==='running'?'Avviso sonoro attivo · recupero consigliato':'Tocca Attiva suono se l’audio è bloccato dal browser.';
-    node.querySelector('[data-rest-note]').textContent=note;
+    const noteNode=node.querySelector('[data-rest-note]');if(noteNode.textContent!==note)noteNode.textContent=note;
   }
   function tickRest(){
     if(!restEngine||!restTimer)return;
@@ -634,9 +634,10 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    if(e.target.closest('[data-action="finish-training"]')&&restTimer?.date===selectedDate&&isDone(selectedDate))stopRest();
     if(e.target.closest('[data-rest-skip]')){stopRest();return;}
     if(e.target.closest('[data-rest-add]')){if(restTimer){restTimer=restEngine.extendRecovery(restTimer,Date.now(),30);restAlerted=false;paintRest();holdRestWake();}return;}
-    if(e.target.closest('[data-rest-audio]')){unlockRestAudio();if(restAudio)Promise.resolve(restAudio.resume()).then(()=>{playRestSound();paintRest();}).catch(()=>{});return;}
+    if(e.target.closest('[data-rest-audio]')){unlockRestAudio().then(ok=>{if(ok)playRestSound();paintRest();});return;}
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
     const history=e.target.closest('[data-wl-history-day]');if(history){selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){openManual.add(selectedDate);setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}

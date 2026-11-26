@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+import * as rest from '../engine/rest-timer.mjs';
+const source=readFileSync(new URL('../cut30-engine-bridge.js',import.meta.url),'utf8');
+test('bridge countdown alerts once, extends, and stops without touching session data',()=>{
+ let clock=1000,tones=0,vibrations=0;const notices=[],children=new Map();
+ const node={hidden:true,classList:{toggle(){}},querySelector(k){if(!children.has(k))children.set(k,{textContent:'',style:{}});return children.get(k);}};
+ const fakeAudio={state:'running',currentTime:0,destination:{},createOscillator(){return {frequency:{},connect(){},start(){tones++;},stop(){}}},createGain(){return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}}}};
+ const globals={rest,fakeAudio,Date:{now:()=>clock},document:{readyState:'loading',visibilityState:'visible',addEventListener(){},querySelector:()=>node,body:{classList:{toggle(){}}}},navigator:{vibrate(){vibrations++;}},toast:s=>notices.push(s),window:{},console};
+ const injected=source.replace(/\}\)\(\);\s*$/,'restEngine=rest;restAudio=fakeAudio;window.actions={beginRest,tickRest,stopRest,onClick};})();');
+ runInNewContext(injected,globals);
+ const a=globals.window.actions;
+ a.beginRest({name:'Panca',rest:'120 sec'},{id:'s1',data:'2026-11-26'});
+ assert.equal(children.get('[data-rest-time]').textContent,'2:00');assert.equal(node.hidden,false);
+ clock=121000;a.tickRest();a.tickRest();assert.equal(tones,3);assert.equal(vibrations,1);assert.equal(notices.length,1);
+ assert.equal(children.get('[data-rest-title]').textContent,'Recupero terminato');
+ a.onClick({target:{closest:s=>s==='[data-rest-add]'?{}:null}});assert.equal(children.get('[data-rest-time]').textContent,'0:30');
+ clock+=30000;a.tickRest();assert.equal(tones,6);a.stopRest();assert.equal(node.hidden,true);
+});
