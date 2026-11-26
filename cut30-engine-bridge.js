@@ -3,7 +3,7 @@
    Only explicit form submissions write a single identified row. */
 (function cut30EngineBridge(){
   'use strict';
-  let engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, planEngine=null, auditEngine=null, auditSaving=false, planLoaded=false, planSaving=false, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
+  let loadSheet=null,loadEpoch=0,loadReadAt=0,loadFailure='',engine=null, recipeEngine=null, cardioEngine=null, learningEngine=null, planEngine=null, auditEngine=null, auditSaving=false, planLoaded=false, planSaving=false, cardioLoaded=false, busy=false, loadedAt=0, currentRecipe=null;
   const cache={Carichi:[],Valutazioni:[],AnalisiAuto:[],CardioSegmenti:[],SchedeConfermate:[],CicloAuto:[]};
   const headers={
     Carichi:['id','data','programma','esercizio','numero_serie','carico_kg','ripetizioni','unita_carico','origine','updated_at'],
@@ -19,30 +19,42 @@
     });
   }
   function formatWarn(message){return '<div class="warning-note">'+h(message)+'</div>';}
+  const loadReady=()=>loadSheet===state.prefs.sheetId&&loadReadAt>0;
+  function publishLoads(rows,sheet){
+    if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante il caricamento');
+    cache.Carichi=rows;loadSheet=sheet;loadReadAt=Date.now();loadFailure='';
+    window.cut30SetLoadEvidence?.(rows,loadReadAt,sheet);
+  }
+  async function readLoadRows(){
+    const sheet=state.prefs.sheetId;
+    const response=await googleApi('/values/'+encodeURIComponent("'Carichi'!A:J")+'?valueRenderOption=UNFORMATTED_VALUE');
+    const values=response.values||[];
+    if(!values.length||headers.Carichi.some((k,i)=>String(values[0]?.[i]??'')!==k))throw Error('Intestazioni Carichi non valide');
+    const rows=parseTable(values);
+    if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante il caricamento');
+    return rows;
+  }
+  async function refreshLoads(){
+    if(!connected()||setSaving)return;
+    const sheet=state.prefs.sheetId,epoch=loadEpoch;
+    try{const rows=await readLoadRows();if(epoch!==loadEpoch||setSaving||sheet!==state.prefs.sheetId)return;publishLoads(rows,sheet);}
+    catch(err){if(epoch===loadEpoch&&sheet===state.prefs.sheetId)loadFailure=String(err.message||err);}
+    if(currentPage==='training'&&!setSaving)render();
+  }
+  window.cut30RefreshTrainingLoads=refreshLoads;
   async function refreshCloud(silent=false){
     if(busy||setSaving||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
     busy=true;
-    const sourceSheet=state.prefs.sheetId,readStarted=Date.now();
+    const sourceSheet=state.prefs.sheetId;
     try{
-      const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-      const end={Carichi:'J',Valutazioni:'L',AnalisiAuto:'P'};
-      ['Carichi','Valutazioni','AnalisiAuto'].forEach(x=>params.append('ranges',"'"+x+"'!A:"+end[x]));
-      // AnalisiAuto might not exist before the first server-side job.
-      let result;
-      try{result=await googleApi('/values:batchGet?'+params.toString());}
-      catch(e){
-        const fallback=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
-        ['Carichi','Valutazioni'].forEach(x=>fallback.append('ranges',"'"+x+"'!A:"+end[x]));
-        result=await googleApi('/values:batchGet?'+fallback.toString());
-        cache.AnalisiAuto=[];
-      }
-      const loadValues=result.valueRanges?.[0]?.values;
-      if(!Array.isArray(loadValues)||!loadValues.length||headers.Carichi.some((k,i)=>loadValues[0][i]!==k))throw Error('Schema Carichi inatteso: storico non verificato');
-      if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
-      cache.Carichi=parseTable(loadValues);
-      window.cut30SetLoadEvidence?.(cache.Carichi,readStarted,sourceSheet);
-      cache.Valutazioni=parseTable(result.valueRanges?.[1]?.values||[]);
-      if(result.valueRanges?.[2])cache.AnalisiAuto=parseTable(result.valueRanges[2].values||[]);
+      await refreshLoads();
+      // Optional reports cannot prevent the user from logging a set.
+      try{
+        const params=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE'});
+        params.append('ranges',"'Valutazioni'!A:L");params.append('ranges',"'AnalisiAuto'!A:P");
+        const r=await googleApi('/values:batchGet?'+params.toString());
+        if(sourceSheet===state.prefs.sheetId){cache.Valutazioni=parseTable(r.valueRanges?.[0]?.values||[]);cache.AnalisiAuto=parseTable(r.valueRanges?.[1]?.values||[]);}
+      }catch(err){console.warn('CUT30 report access:',err.message);}
       try{await loadCardio();}catch(err){cardioLoaded=false;cache.CardioSegmenti=[];console.warn('Cardio detail unavailable');}
       try{await loadPlans();}catch(err){planLoaded=false;cache.SchedeConfermate=[];window.cut30SetConfirmedPlans?.([]);console.warn('Plan archive unavailable');}
       try{
@@ -50,8 +62,8 @@
         cache.CicloAuto=meta.sheets?.some(x=>x.properties.title==='CicloAuto')?parseTable((await googleApi('/values/'+encodeURIComponent("'CicloAuto'!A:I")+'?valueRenderOption=UNFORMATTED_VALUE')).values||[]):[];
       }catch{cache.CicloAuto=[];}
       if(sourceSheet!==state.prefs.sheetId)throw Error('Diario cambiato durante la lettura');
-      loadedAt=Date.now();
-      if(engine)render();
+      loadedAt=loadReady()?loadReadAt:0;
+      if(engine&&!setSaving)render();
       if(!silent)toast('Motore CUT30: dati privati aggiornati.');
     }catch(err){console.error('CUT30 Engine refresh:',err);if(!silent)toast('Aggiornamento motore non riuscito: '+err.message);}
     finally{busy=false;}
@@ -356,6 +368,7 @@
     paintRest();holdRestWake();
   }
   let logEngine, flowEngine, muscleEngine, guideUrl=null;
+  const logFeedback=new Map();
   const logDrafts=new Map(), logOpen=new Map(), sessionDrafts=new Map(), openManual=new Set();
   const logItems=(items=logExercises())=>items.map(ex=>({id:ex.id,done:exerciseDone(ex,items)}));
   function exerciseDone(ex,items=logExercises()){return checkedExercise(ex,selectedDate,items)||logEngine.workingCount(ex,setRows(ex),engine.readSetEffort)>=ex.sets;}
@@ -363,22 +376,26 @@
   function currentOpen(items){if(!logOpen.has(selectedDate))setOpen(selectedDate,flowEngine.initialOpen(logItems(items)));else if(items&&!openManual.has(selectedDate)&&logOpen.get(selectedDate)!==null){const rows=logItems(items);if(rows.find(x=>x.id===logOpen.get(selectedDate))?.done||!rows.some(x=>x.id===logOpen.get(selectedDate)))setOpen(selectedDate,flowEngine.initialOpen(rows));}return logOpen.get(selectedDate);}
   function advanceOpen(date,id,items){if(logOpen.get(date)!==id)return false;openManual.delete(date);setOpen(date,flowEngine.nextOpen(items,id,id));return true;}
   function revealNext(date){if(currentPage!=='training'||selectedDate!==date)return;const id=logOpen.get(date);const target=id?document.querySelector('[data-wl-row="'+id+'"]'):document.querySelector('.wl-session-end');target?.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
-  const logKey=(date,id)=>date+'|'+id;
+  const logKey=(date,id)=>String(state.prefs.sheetId)+'|'+date+'|'+id;
   function logPlan(){
     try{const saved=cache.SchedeConfermate.find(x=>x.data===selectedDate);
       return saved?planEngine.readPlanRecord(saved):isDone(selectedDate)?null:createPlan(selectedDate);
     }catch{return null;}
   }
   function logExercises(){const p=logPlan();return p?.exercises||WORKOUTS[programFor(selectedDate)]||[];}
-  function setRows(ex){const items=logExercises();return cache.Carichi.filter(x=>x.data===selectedDate&&(!x.programma||x.programma===programFor(selectedDate))&&(muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id||logEngine.matching(ex,[x]).length));}
+  function setRows(ex){const items=logExercises();return (loadReady()?cache.Carichi:[]).filter(x=>x.data===selectedDate&&(!x.programma||x.programma===programFor(selectedDate))&&(muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id||logEngine.matching(ex,[x]).length));}
   function checkedExercise(ex,date=selectedDate,items=logExercises()){const matches=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===programFor(date)&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id).sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));return String(matches[0]?.completato).toLowerCase()==='true';}
   const selectOptions=(values,selected)=>values.map(v=>'<option value="'+h(v)+'" '+(String(v)===String(selected)?'selected':'')+'>'+h(v)+'</option>').join('');
   function exerciseRow(ex,index,items){
-    const rows=setRows(ex),historical=cache.Carichi.filter(x=>x.data<selectedDate&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id),lastDay=historical.map(x=>x.data).sort().at(-1),past=historical.filter(x=>x.data===lastDay).sort((a,b)=>Number(a.numero_serie)-Number(b.numero_serie));
+    const rows=setRows(ex),historical=(loadReady()?cache.Carichi:[]).filter(x=>x.data<selectedDate&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id),lastDay=historical.map(x=>x.data).sort().at(-1),past=historical.filter(x=>x.data===lastDay).sort((a,b)=>Number(a.numero_serie)-Number(b.numero_serie));
     const count=logEngine.workingCount(ex,rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex,selectedDate,items),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
     const names=logEngine.namesFor(ex),key=logKey(selectedDate,ex.id),draft=logDrafts.get(key)||{},last=past.filter(x=>logEngine.unitParts(x.unita_carico)).at(-1),unit=logEngine.unitParts(last?.unita_carico),variant=draft.esercizio||names.find(v=>logEngine.norm(v)===logEngine.norm(last?.esercizio))||names[0],guide=logEngine.guideFor(ex,variant);
-    const restSeconds=restEngine?.recoverySeconds(ex),next=logEngine.nextSet(ex,rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadedAt||future;
+    const restSeconds=restEngine?.recoverySeconds(ex),next=logEngine.nextSet(ex,rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadReady()||future,saveDisabled=future||setSaving;
     const val=(k,fallback='')=>h(draft[k]??fallback);
+    const dumbbell=/manubr/i.test(variant),barbell=/bilancier/i.test(variant);
+    const defaultUnit=dumbbell?'kg per mano':barbell?'kg totale':'kg macchina';
+    const defaultEquipment=dumbbell?'Manubri':barbell?'Bilanciere':'';
+    const feedback=logFeedback.get(key);
     const history=past.length?'<span class="wl-history-date">'+h(past[0].data)+'</span> '+past.map(r=>'<span class="wl-hist" title="'+h(r.unita_carico)+'">'+h(r.esercizio)+' · S'+h(r.numero_serie)+' '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'<small>'+h(r.unita_carico||'Unità non identificata')+'</small></span>').join(' '):loadedAt?'Nessuna serie precedente':'Storico da caricare';
     const refs=(ex.references||[]).map(r=>'<span class="wl-ref">'+h(r.exercise)+' · '+h(r.unit)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+': '+h(r.reference_kg??'—')+' kg × '+h(r.reference_reps??'—')+(r.conditional_target_reps==null?'':' → '+h(r.conditional_target_reps)+' reps')+'<small>'+h(r.load_increase_allowed?'Incremento minimo solo se tecnica e recupero adeguati.':r.note||'')+'</small></span>').join('');
     const compactLast=past.at(-1),compact=compactLast?h(compactLast.carico_kg)+' kg × '+h(compactLast.ripetizioni):'Nessun dato';
@@ -392,18 +409,18 @@
       (setList?'<div class="wl-record-label">Serie registrate · tocca per modificare</div><div class="wl-set-list">'+setList+'</div>':'')+
       (timed?'<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future?'disabled':'')+'> Conferma attività svolta (tempo nel diario seduta)</label>':
       '<div class="wl-entry">'+
-      '<form class="wl-set-form" data-wl-form="'+h(ex.id)+'" data-wl-date="'+h(selectedDate)+'" '+(draft.editId?'data-edit-id="'+h(draft.editId)+'"':'')+'><div class="wl-fields">'+
+      '<form novalidate class="wl-set-form" data-wl-form="'+h(ex.id)+'" data-wl-date="'+h(selectedDate)+'" '+(draft.editId?'data-edit-id="'+h(draft.editId)+'"':'')+'><div class="wl-fields">'+
       '<label>Variante<select name="esercizio">'+selectOptions(names,variant)+'</select></label>'+
       '<label>Serie<input name="serie" type="number" min="1" max="25" value="'+val('serie',next??'')+'" required></label>'+
       '<label>Kg<input name="kg" inputmode="decimal" type="number" min="0" step="any" value="'+val('kg')+'" placeholder="—" required></label>'+
       '<label>Ripetizioni<input name="reps" inputmode="numeric" type="number" min="1" max="100" value="'+val('reps')+'" placeholder="—" required></label>'+
       '</div><div class="wl-fields wl-equipment"><label>Palestra<select name="palestra">'+selectOptions(['A','B'],draft.palestra||unit?.gym||'A')+'</select></label>'+
-      '<label>Attrezzo<input name="attrezzo" required value="'+val('attrezzo',unit?.equipment||'')+'" placeholder="ID / nome macchina"></label>'+
-      '<label>Unità<select name="unita">'+selectOptions(['kg macchina','kg per mano','kg totale'],draft.unita||unit?.type||'kg macchina')+'</select></label>'+
+      '<label>Attrezzo<input name="attrezzo" required value="'+val('attrezzo',unit?.equipment||defaultEquipment)+'" placeholder="ID / nome macchina"></label>'+
+      '<label>Unità<select name="unita">'+selectOptions(['kg macchina','kg per mano','kg totale'],draft.unita||unit?.type||defaultUnit)+'</select></label>'+
       '<label>Tipo serie<select name="tipo_serie">'+selectOptions(['allenante','riscaldamento','non_specificata'],draft.tipo_serie||'allenante')+'</select></label></div>'+
       '<div class="wl-fields wl-effort"><label>RIR<input name="rir" type="number" min="0" max="10" value="'+val('rir')+'" placeholder="—"></label><label>RPE<input name="rpe" type="number" min="1" max="10" step="0.5" value="'+val('rpe')+'" placeholder="—"></label></div>'+
-      '<div class="wl-actions">'+(last?'<button class="btn btn-quiet" type="button" data-wl-copy="'+h(ex.id)+'">Usa ultima serie</button>':'')+'<button class="btn" type="submit" '+(disabled?'disabled':'')+'>Salva serie</button></div>'+
-      '<p class="tiny muted">'+(future?'Non puoi registrare una prestazione futura.':disabled?'Connetti Google e aggiorna lo storico prima di registrare.':'I valori sono registrati soltanto dopo il salvataggio verificato.')+'</p></form></div>'+
+      '<div class="wl-actions">'+(last?'<button class="btn btn-quiet" type="button" data-wl-copy="'+h(ex.id)+'">Usa ultima serie</button>':'')+'<button class="btn" type="submit" '+(saveDisabled?'disabled':'')+'>'+(setSaving?'Salvataggio…':'Salva serie')+'</button></div>'+
+      '<p class="wl-save-feedback '+(feedback?.error?'wl-save-error':'')+'" data-wl-feedback role="status">'+(feedback?h(feedback.message):future?'Non puoi registrare una prestazione futura.':!connected()?'Google non collegato. Premi Salva serie per ricollegarti.':loadFailure?h(loadFailure):!loadReady()?'Lo storico sarà verificato al salvataggio.':'Indica carico, ripetizioni e attrezzo. RIR/RPE facoltativi.')+'</p></form></div>'+
       '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+'</div></article>';
   }
   function trainingPanel(){
@@ -480,10 +497,12 @@
   function slug(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'esercizio';}
   async function saveRow(table,rec,expected=null){
     if(!connected())throw new Error('Account Google non collegato o sessione scaduta');
+    const sheet=state.prefs.sheetId;
+    const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati: aggiorna prima di riprovare');};
     const head=headers[table];
     const url="/values/"+encodeURIComponent("'"+table+"'!A:"+String.fromCharCode(64+head.length))+"?valueRenderOption=UNFORMATTED_VALUE";
     const data=await googleApi(url);
-    const values=data.values||[];
+    assertSource();const values=data.values||[];
     if(!values.length || head.some((x,i)=>String(values[0][i]||'')!==x))throw new Error('Schema inatteso: '+table+'. Nessuna modifica eseguita.');
     const matches=values.map((r,i)=>i>0&&String(r[0])===rec.id?i:-1).filter(i=>i>0);
     if(matches.length>1)throw new Error('ID duplicato: riconciliare prima di scrivere');
@@ -502,62 +521,67 @@
     }else{
       await googleApi('/values/'+encodeURIComponent("'"+table+"'!A:"+String.fromCharCode(64+head.length))+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',body);
     }
-    const after=await googleApi(url);
+    assertSource();const after=await googleApi(url);assertSource();
     const verified=(after.values||[]).filter((r,i)=>i>0&&r[0]===rec.id);
     if(verified.length!==1)throw new Error('Verifica record non univoca: aggiorna il diario');
     const saved=verified[0];
     if(!saved)throw new Error('Scrittura inviata ma verifica del record non riuscita');
     const mismatch=head.some((key,index)=>String(saved[index]??'')!==String(rec[key]??''));
     if(mismatch)throw new Error('Il record esiste ma alcuni valori non coincidono: aggiorna il diario prima di riprovare.');
-    return saved;
+    return {row:saved,allRows:after.values||[]};
   }
   let setSaving=false;
   async function submitSet(form){
-    if(setSaving||busy)throw Error('Aggiornamento in corso: riprova.');
+    if(setSaving)throw Error('Una serie è già in salvataggio. Attendi la verifica.');
     const date=form.dataset.wlDate,ex=logExercises().find(x=>x.id===form.dataset.wlForm),program=logPlan()?.program||programFor(date);
-    if(!ex||program!==programFor(date)||date!==selectedDate||date>localDate()||!connected()||!loadedAt)throw Error('Data, esercizio o connessione non validi.');
+    if(!ex||program!==programFor(date)||date!==selectedDate||date>localDate())throw Error('Data o esercizio non validi.');
+    if(!connected()){connectGoogle();throw Error('Collega Google, quindi premi nuovamente Salva serie. I dati inseriti restano nella scheda.');}
     const data=new FormData(form),exercise=String(data.get('esercizio')||'').trim();
     const number=Number(data.get('serie')),kg=Number(data.get('kg')),reps=Number(data.get('reps'));
     if(!logEngine.namesFor(ex).includes(exercise)||String(data.get('kg')??'').trim()===''||!Number.isInteger(number)||number<1||number>25||!Number.isFinite(kg)||kg<0||!Number.isInteger(reps)||reps<1||reps>100)throw Error('Serie/carico/ripetizioni non validi.');
     const gym=String(data.get('palestra')),eq=String(data.get('attrezzo')||'').trim(),type=String(data.get('unita'));
     if(!eq||!['A','B'].includes(gym)||!['kg macchina','kg per mano','kg totale'].includes(type))throw Error('Indica palestra, attrezzo e unità.');
     const unit=type+' | palestra '+gym+' | attrezzo '+eq;
-    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort),wasDone=exerciseDone(ex);
+    const sheet=state.prefs.sheetId;
     const canonical='s-'+date.replaceAll('-','')+'-'+slug(exercise)+'-'+slug(gym+'-'+eq)+'-'+number;
+    setSaving=true;loadEpoch++;
+    try{
+    publishLoads(await readLoadRows(),sheet);
+    if(date!==selectedDate)throw Error('Data cambiata durante il salvataggio. Riprova dalla scheda corretta.');
+    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort),wasDone=exerciseDone(ex);
     const existing=cache.Carichi.find(x=>x.id===form.dataset.editId);
+    if(form.dataset.editId&&!existing)throw Error('La serie da modificare non esiste più. Aggiorna la scheda.');
     if(existing&&(existing.data!==date||logEngine.norm(existing.esercizio)!==logEngine.norm(exercise)||Number(existing.numero_serie)!==number||existing.unita_carico!==unit))throw Error('Per correggere una serie mantieni variante, palestra, attrezzo e numero originali.');
     const same=cache.Carichi.find(x=>x.id===canonical);
-    if(!existing&&same)throw Error('Serie già presente: seleziona la serie registrata per modificarla.');
-    if(existing&&!confirm('Confermi la correzione della serie '+number+'?'))return;
+    if(!existing&&same){if(currentPage==='training')render();throw Error('Serie già presente: seleziona la serie registrata per modificarla.');}
+    if(existing&&!confirm('Confermi la correzione della serie '+number+'?')){showSetFeedback(form,'Modifica annullata');return;}
     const rec={id:existing?.id||canonical,data:date,programma:program,esercizio:existing?.esercizio||exercise,numero_serie:number,carico_kg:kg,ripetizioni:reps,unita_carico:unit,
       origine:engine.encodeSetEffort('Confermato da utente PWA CUT30 Engine. Kg dichiarati, non confrontare macchine differenti.',{tipo_serie:data.get('tipo_serie'),rir:data.get('rir'),rpe:data.get('rpe')}),updated_at:new Date().toISOString()};
-    setSaving=true;
-    try{
-      await saveRow('Carichi',rec,existing||null);
-      cache.Carichi=cache.Carichi.filter(x=>x.id!==rec.id).concat(rec);
-      window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),state.prefs.sheetId);
-      const after=logEngine.workingCount(ex,logEngine.matching(ex,cache.Carichi.filter(x=>x.data===date)),engine.readSetEffort);
+      const saved=await saveRow('Carichi',rec,existing||null);
+      if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato: verifica il salvataggio sul diario originale.');
+      publishLoads(parseTable(saved.allRows),sheet);
+      const after=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&x.programma===program),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
-      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
-      if(restEngine&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||logItems().some(x=>x.id!==ex.id&&!x.done),exercise:ex}))beginRest(ex,rec);
-      else if(!existing&&date===localDate())stopRest();
-      toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
+      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
+      try{if(restEngine&&date===selectedDate&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||(date===selectedDate&&logItems().some(x=>x.id!==ex.id&&!x.done)),exercise:ex}))beginRest(ex,rec);
+      else if(!existing&&date===localDate())stopRest();}catch(err){console.warn('Timer non disponibile:',err);}
+      setSaving=false;toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
     }finally{setSaving=false;}
-    await refreshCloud(true);
+    // Optional reports update independently; never block the next series.
   }
   async function deleteSet(id,exId){
-    if(setSaving||busy)throw Error('Aggiornamento in corso: riprova');
+    if(setSaving)throw Error('Salvataggio in corso: riprova');
     const date=selectedDate,sheet=state.prefs.sheetId,program=programFor(date),items=logExercises(),ex=items.find(x=>x.id===exId);
     const rec=ex&&setRows(ex).find(x=>String(x.id)===id);
-    if(!rec||!connected()||!loadedAt||date>localDate())throw Error('Registrazione non disponibile o connessione scaduta');
+    if(!rec||!connected()||!loadReady()||date>localDate())throw Error('Registrazione non disponibile o connessione scaduta');
     if(!confirm('Eliminare definitivamente '+rec.esercizio+' · serie '+rec.numero_serie+' ('+rec.carico_kg+' kg × '+rec.ripetizioni+') del '+date+'?'))return;
     const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort);
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
-    setSaving=true;
+    setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.7.2');
+      const mod=await import('./engine/delete-record.mjs?v=3.7.3');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
-      assertSource();if(restTimer?.recordId===id)stopRest();cache.Carichi=parseTable(after);window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),sheet);
+      assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
       const remaining=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&(!x.programma||x.programma===program)),engine.readSetEffort);
       if(before>=ex.sets&&remaining<ex.sets){
         // Revoke all matching completion flags, including historical aliases, not other exercises.
@@ -571,7 +595,7 @@
       // Sync checklist changes; the session itself stays confirmed unless edited explicitly.
       if(before>=ex.sets&&remaining<ex.sets)await sync();
       else window.cut30ArchiveExperience?.();
-    }finally{setSaving=false;}
+    }finally{setSaving=false;if(currentPage==='training')render();}
   }
   function computeRecipe(form){
     const info=new FormData(form);
@@ -611,15 +635,43 @@
     toast('Porzione registrata nel database privato');
     render();
   }
+  function showSetFeedback(form,message,error=false){
+    const key=logKey(form.dataset.wlDate,form.dataset.wlForm);
+    logFeedback.set(key,{message,error});
+    const live=[...document.querySelectorAll('.wl-set-form')].find(x=>x.dataset.wlDate===form.dataset.wlDate&&x.dataset.wlForm===form.dataset.wlForm)||form;
+    const p=live.querySelector('[data-wl-feedback]');
+    if(p){p.textContent=message;p.classList.toggle('wl-save-error',error);}
+  }
   function onSubmit(e){
     if(!e.target.dataset.wlForm&&!['cut30-recipe-form','cut30-cardio-form'].includes(e.target.id))return;
     e.preventDefault();e.stopImmediatePropagation();
     const form=e.target;
     if(form.dataset.pending==='1')return;
+    const isSet=!!form.dataset.wlForm;
+    if(isSet){
+      captureLog(form);
+      if(setSaving){showSetFeedback(form,'Salvataggio in corso. Attendi la verifica.',true);return;}
+      if(!form.checkValidity()){
+        const invalid=form.querySelector(':invalid'),label=invalid?.closest('label')?.textContent?.trim()||'campo obbligatorio';
+        showSetFeedback(form,'Verifica '+label+': '+(invalid?.validationMessage||'valore mancante o non valido'),true);
+        invalid?.focus();form.reportValidity();return;
+      }
+      if(form.dataset.wlDate===localDate()&&!form.dataset.editId){try{unlockRestAudio().catch(()=>{});}catch{}}
+      showSetFeedback(form,'Salvataggio e verifica su Google Sheets…');
+      const button=form.querySelector('button[type="submit"]');if(button){button.disabled=true;button.textContent='Salvataggio…';}
+    }
     form.dataset.pending='1';
-    if(form.dataset.wlForm&&form.dataset.wlDate===localDate()&&!form.dataset.editId)unlockRestAudio();
-    const task=form.dataset.wlForm?submitSet(form):form.id==='cut30-cardio-form'?submitCardio(form):Promise.resolve().then(()=>computeRecipe(form));
-    Promise.resolve(task).catch(err=>{toast('CUT30 Engine: '+err.message);console.error('CUT30 Engine input:',err.message);}).finally(()=>{form.dataset.pending='0';});
+    const task=isSet?submitSet(form):form.id==='cut30-cardio-form'?submitCardio(form):Promise.resolve().then(()=>computeRecipe(form));
+    Promise.resolve(task).catch(err=>{
+      if(isSet)showSetFeedback(form,String(err.message||err),true);
+      toast('CUT30: '+err.message);console.error('CUT30 Engine input:',err.message);
+    }).finally(()=>{
+      form.dataset.pending='0';
+      if(isSet){const button=form.querySelector('button[type="submit"]');if(button){button.disabled=form.dataset.wlDate>localDate();button.textContent='Salva serie';}
+        // A background render may have replaced the old form while the request was pending.
+        if(!setSaving)for(const live of document.querySelectorAll('.wl-set-form')){const btn=live.querySelector('button[type="submit"]');if(btn){btn.disabled=live.dataset.wlDate>localDate();btn.textContent='Salva serie';}}
+      }
+    });
   }
   function onInput(e){
     const session=e.target.closest('#training-form');if(session){sessionDrafts.set(selectedDate,Object.fromEntries(new FormData(session)));return;}
@@ -670,7 +722,7 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.2');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.3');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
