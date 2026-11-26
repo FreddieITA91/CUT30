@@ -89,7 +89,7 @@ export function buildTrainingLevel({workouts=[],loads=[],segments=[],start,today
   const positive=[w.durata_pesi_min,w.durata_cardio_min,w.durata_core_min].some(v=>n(v)>0);
   // Mixed or isolated declines remain unclassified; only repeated, consistent falls cost XP.
   const outcome=up>evidence.length/2&&down===0?'improvement':down>evidence.length/2&&up===0?'decline':flat>evidence.length/2&&up===0&&down===0?'maintenance':positive&&!evidence.length?'baseline':'unknown';
-  const points=XP[outcome],before=total;total=Math.max(0,total+points);counts[outcome]++;
+  const points=XP[outcome],before=total;total=Math.max(baseline&&w.data>=baseline.date?-initialXP:0,total+points);counts[outcome]++;
   events.push({date:w.data,program:w.programma,outcome,points,applied:total-before,total,level:baseline?levelFromXP(initialXP+total).level:null,evidence});
  }
  const recent=sessions.filter(w=>age(today,w.data)<28);

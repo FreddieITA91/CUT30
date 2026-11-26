@@ -186,7 +186,7 @@ async function sync(){
     state.dirtyConfig=[];
     state.lastSync=now();
     save();
-    window.cut30RefreshLoadEvidence?.();
+    window.cut30ArchiveExperience?.();
     if(render())toast('Sincronizzazione sicura completata: '+planned.counts.updated+
       ' righe aggiornate, '+planned.counts.inserted+' nuove.');
     else toast('Sincronizzazione terminata, ma ricarica la vista.');
