@@ -20,7 +20,7 @@
   }
   function formatWarn(message){return '<div class="warning-note">'+h(message)+'</div>';}
   async function refreshCloud(silent=false){
-    if(busy||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
+    if(busy||setSaving||!connected()){if(!silent)toast('Connetti Google in Impostazioni per caricare i dati privati.');return;}
     busy=true;
     const sourceSheet=state.prefs.sheetId,readStarted=Date.now();
     try{
@@ -302,7 +302,7 @@
     }catch{return null;}
   }
   function logExercises(){const p=logPlan();return p?.exercises||WORKOUTS[programFor(selectedDate)]||[];}
-  function setRows(ex){return logEngine.matching(ex,cache.Carichi.filter(x=>x.data===selectedDate));}
+  function setRows(ex){const items=logExercises();return cache.Carichi.filter(x=>x.data===selectedDate&&(!x.programma||x.programma===programFor(selectedDate))&&(muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id||logEngine.matching(ex,[x]).length));}
   function checkedExercise(ex,date=selectedDate,items=logExercises()){const matches=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===programFor(date)&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id).sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));return String(matches[0]?.completato).toLowerCase()==='true';}
   const selectOptions=(values,selected)=>values.map(v=>'<option value="'+h(v)+'" '+(String(v)===String(selected)?'selected':'')+'>'+h(v)+'</option>').join('');
   function exerciseRow(ex,index,items){
@@ -316,12 +316,12 @@
     const compactLast=past.at(-1),compact=compactLast?h(compactLast.carico_kg)+' kg × '+h(compactLast.ripetizioni):'Nessun dato';
     const opened=currentOpen()===ex.id;
     const image=guide?'<img class="wl-photo" src="'+h(guide.frames[0])+'" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">':'';
-    const setList=rows.map(r=>'<button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||future?'disabled':'')+'>S'+h(r.numero_serie)+' · '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+' <small>'+h(engine.readSetEffort(r.origine).tipo_serie)+'</small></button>').join('');
+    const setList=rows.map(r=>'<div class="wl-set-record"><button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||disabled||!logEngine.unitParts(r.unita_carico)||!logEngine.namesFor(ex).some(v=>logEngine.norm(v)===logEngine.norm(r.esercizio))?'disabled':'')+'>S'+h(r.numero_serie)+' · '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+' <small>'+h(engine.readSetEffort(r.origine).tipo_serie)+'</small></button><button type="button" class="wl-delete" data-wl-delete="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" aria-label="Elimina serie '+h(r.numero_serie)+'" '+(disabled?'disabled':'')+'>Elimina</button></div>').join('');
     return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+'</small><small>Ultimo: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
       '<div class="wl-expand" '+(opened?'':'hidden')+'>'+
-      '<div class="wl-comparison"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div><div><span>ULTIMA REGISTRAZIONE</span><div class="wl-history">'+history+'</div></div></div>'+
+      '<div class="wl-comparison"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div><div><span>ULTIMA REGISTRAZIONE</span><div class="wl-history">'+history+(past.length?'<button type="button" class="wl-history-link" data-wl-history-day="'+h(past[0].data)+'">Apri registrazioni di questa data</button>':'')+'</div></div></div>'+
       '<div class="wl-meter" aria-label="Serie allenanti verificate">'+Array.from({length:ex.sets},(_,i)=>'<i class="'+(i<count?'filled':'')+'"></i>').join('')+'</div>'+
-      (setList?'<div class="wl-set-list">'+setList+'</div>':'')+
+      (setList?'<div class="wl-record-label">Serie registrate · tocca per modificare</div><div class="wl-set-list">'+setList+'</div>':'')+
       (timed?'<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future?'disabled':'')+'> Conferma attività svolta (tempo nel diario seduta)</label>':
       '<div class="wl-entry">'+
       '<form class="wl-set-form" data-wl-form="'+h(ex.id)+'" data-wl-date="'+h(selectedDate)+'" '+(draft.editId?'data-edit-id="'+h(draft.editId)+'"':'')+'><div class="wl-fields">'+
@@ -445,7 +445,7 @@
   }
   let setSaving=false;
   async function submitSet(form){
-    if(setSaving)throw Error('Una serie è già in salvataggio.');
+    if(setSaving||busy)throw Error('Aggiornamento in corso: riprova.');
     const date=form.dataset.wlDate,ex=logExercises().find(x=>x.id===form.dataset.wlForm),program=logPlan()?.program||programFor(date);
     if(!ex||program!==programFor(date)||date!==selectedDate||date>localDate()||!connected()||!loadedAt)throw Error('Data, esercizio o connessione non validi.');
     const data=new FormData(form),exercise=String(data.get('esercizio')||'').trim();
@@ -471,7 +471,36 @@
       const after=logEngine.workingCount(ex,logEngine.matching(ex,cache.Carichi.filter(x=>x.data===date)),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
       const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
-      toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));await refreshCloud(true);
+      toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
+    }finally{setSaving=false;}
+    await refreshCloud(true);
+  }
+  async function deleteSet(id,exId){
+    if(setSaving||busy)throw Error('Aggiornamento in corso: riprova');
+    const date=selectedDate,sheet=state.prefs.sheetId,program=programFor(date),items=logExercises(),ex=items.find(x=>x.id===exId);
+    const rec=ex&&setRows(ex).find(x=>String(x.id)===id);
+    if(!rec||!connected()||!loadedAt||date>localDate())throw Error('Registrazione non disponibile o connessione scaduta');
+    if(!confirm('Eliminare definitivamente '+rec.esercizio+' · serie '+rec.numero_serie+' ('+rec.carico_kg+' kg × '+rec.ripetizioni+') del '+date+'?'))return;
+    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort);
+    const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
+    setSaving=true;
+    try{
+      const mod=await import('./engine/delete-record.mjs?v=3.7.1');
+      const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
+      assertSource();cache.Carichi=parseTable(after);window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),sheet);
+      const remaining=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&(!x.programma||x.programma===program)),engine.readSetEffort);
+      if(before>=ex.sets&&remaining<ex.sets){
+        // Revoke all matching completion flags, including historical aliases, not other exercises.
+        const matching=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===program&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id&&String(x.completato).toLowerCase()==='true');
+        for(const x of matching)upsert('Esercizi',{...x,completato:'false',updated_at:now()});
+        upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:'false',updated_at:now()});
+      }
+      const key=logKey(date,ex.id);if(logDrafts.get(key)?.editId===id)logDrafts.delete(key);
+      if(date===selectedDate){openManual.add(date);setOpen(date,ex.id);}
+      toast('Serie eliminata e verificata');render();
+      // Sync checklist changes; the session itself stays confirmed unless edited explicitly.
+      if(before>=ex.sets&&remaining<ex.sets)await sync();
+      else window.cut30ArchiveExperience?.();
     }finally{setSaving=false;}
   }
   function computeRecipe(form){
@@ -534,6 +563,8 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
+    const history=e.target.closest('[data-wl-history-day]');if(history){selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){openManual.add(selectedDate);setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}
     if(e.target.closest('[data-wl-session-data]')){document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}

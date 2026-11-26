@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {locateRecord,deleteVerified} from '../engine/delete-record.mjs';
+const headers=['id','data','programma','esercizio','numero_serie','carico_kg','ripetizioni','unita_carico','origine','updated_at'];
+const row=['s1','2026-11-26','Upper B','Panca',1,22,10,'kg per mano','manual','2026-11-26T12:00:00Z'];
+const expected=Object.fromEntries(headers.map((k,i)=>[k,row[i]]));
+const others=['s2',...row.slice(1)];
+test('only a unique matching row can be deleted',()=>{assert.equal(locateRecord([headers,others,row],headers,expected),3);assert.throws(()=>locateRecord([headers,row,row],headers,expected),/duplicato/);assert.throws(()=>locateRecord([headers],headers,expected),/non più disponibile/);assert.throws(()=>locateRecord([headers,row],headers,{...expected,carico_kg:25}),/modificata/);assert.throws(()=>locateRecord([['wrong'],row],headers,expected),/Schema/);});
+test('verified deletion clears exactly the target cells, never shifts unrelated rows',async()=>{let values=[headers,row,others],writes=[];const api=async(path,method,body)=>{if(method==='POST'){writes.push({path:decodeURIComponent(path),body});values[1]=[];return {}}return {values:structuredClone(values)};};const result=await deleteVerified({api,assertSource(){},table:'Carichi',headers,expected});assert.deepEqual(writes,[{path:"/values/'Carichi'!A2:J2:clear",body:{}}]);assert.deepEqual(result,[headers,[],others]);});
+test('changed record between reads aborts before any write',async()=>{let reads=0;const api=async(path,method)=>{assert.notEqual(method,'POST');return {values:[headers,++reads===1?row:[...row.slice(0,5),25,...row.slice(6)]]};};await assert.rejects(deleteVerified({api,assertSource(){},table:'Carichi',headers,expected}),/modificata/);});
+test('unverified clear never reports success',async()=>{const api=async()=>({values:[headers,row,others]});await assert.rejects(deleteVerified({api,assertSource(){},table:'Carichi',headers,expected}),/non verificata/);});
