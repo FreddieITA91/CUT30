@@ -46,3 +46,5 @@ test('opening is isolated by diary, date and program, never persisted across fre
  x.globals.state.prefs.sheetId='other';assert.equal(x.api.isExerciseOpen(day,ex.id),false);
  assert.equal(fixture().api.isExerciseOpen(day,ex.id),false);
 });
+
+test('live chart and side-by-side comparison update after each actual verified set',async()=>{const x=fixture(),items=WORKOUTS['Upper B'];x.rows.push(['historic','2026-11-19','Upper B',ex.name,1,18,8,'kg per mano | palestra B | attrezzo Manubri','',day]);x.api.toggleExercise(day,ex.id);await x.api.submitSet(x.form);let html=x.api.exerciseRow(ex,0,items);assert.match(html,/data-trend-points="2"/);assert.match(html,/Ripetizioni totali <b>10/);assert.match(html,/Ultima seduta/);assert.match(html,/Questa seduta/);assert.ok(html.indexOf('wl-trend')<html.indexOf('wl-session-compare'));x.values.serie='2';x.values.kg='24';x.values.reps='8';await x.api.submitSet(x.form);html=x.api.exerciseRow(ex,0,items);assert.match(html,/Carico max <b>24 kg/);assert.match(html,/Ripetizioni totali <b>18/);assert.match(html,/2026-11-19 → 2026-11-26/);});
