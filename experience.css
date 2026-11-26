@@ -328,3 +328,6 @@ html,body,.shell{background:var(--bg);color:var(--text)}.sidebar,.bottom-nav{bac
 
 /* 3.7.5: dismissible recovery overlay */
 .wl-rest-close{flex:none;display:grid;place-items:center;width:32px;height:32px;min-width:32px;padding:0;border:0;border-radius:50%;background:#39393d;color:#f5f5f7;font:inherit;font-size:24px;line-height:1;cursor:pointer}.wl-rest-close:focus-visible{outline:2px solid var(--teal);outline-offset:2px}.wl-rest-top{gap:8px}.wl-rest-top>div{flex:1;min-width:0}
+
+/* 3.7.6 — closed is fail-safe, independent of other layout rules */
+.wl-ex[data-wl-open="false"]>.wl-expand,.wl-ex>.wl-expand[hidden]{display:none!important}.wl-ex[data-wl-open="true"]>.wl-expand:not([hidden]){display:block}
