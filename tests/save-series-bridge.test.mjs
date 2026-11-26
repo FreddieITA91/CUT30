@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdtempSync,rmSync,existsSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
 import {runInNewContext} from 'node:vm';
 import * as core from '../engine/cut30.mjs';
 import * as log from '../engine/workout-log.mjs';
@@ -48,3 +51,16 @@ test('opening is isolated by diary, date and program, never persisted across fre
 });
 
 test('live chart and side-by-side comparison update after each actual verified set',async()=>{const x=fixture(),items=WORKOUTS['Upper B'];x.rows.push(['historic','2026-11-19','Upper B',ex.name,1,18,8,'kg per mano | palestra B | attrezzo Manubri','',day]);x.api.toggleExercise(day,ex.id);await x.api.submitSet(x.form);let html=x.api.exerciseRow(ex,0,items);assert.match(html,/data-trend-points="2"/);assert.match(html,/Ripetizioni totali <b>10/);assert.match(html,/Ultima seduta/);assert.match(html,/Questa seduta/);assert.ok(html.indexOf('wl-trend')<html.indexOf('wl-session-compare'));x.values.serie='2';x.values.kg='24';x.values.reps='8';await x.api.submitSet(x.form);html=x.api.exerciseRow(ex,0,items);assert.match(html,/Carico max <b>24 kg/);assert.match(html,/Ripetizioni totali <b>18/);assert.match(html,/2026-11-19 → 2026-11-26/);});
+
+test('Chromium: exercise chart and both session columns fit on narrow phone widths',async t=>{
+ const chrome=[process.env.CHROME_BIN,'/usr/bin/google-chrome','/usr/bin/google-chrome-stable','/usr/bin/chromium','/usr/bin/chromium-browser'].find(p=>p&&existsSync(p));
+ if(!chrome){t.skip('No Chromium executable available');return;}
+ const x=fixture(),items=WORKOUTS['Upper B'];
+ x.rows.push(['historic','2026-11-19','Upper B',ex.name,1,18,8,'kg per mano | palestra B | attrezzo Manubri','',day]);
+ x.api.toggleExercise(day,ex.id);await x.api.submitSet(x.form);
+ const css=['styles.css','experience.css'].map(p=>readFileSync(new URL('../'+p,import.meta.url),'utf8')).join('\n');
+ const inner='<style>'+css+'</style><div class="shell"><main class="main"><div class="content" id="app"><section class="panel wl-shell">'+x.api.exerciseRow(ex,0,items)+x.api.exerciseRow(items[2],1,items)+'</section></div></main></div>';
+ const payload=JSON.stringify(inner).replace(/</g,'\\u003c');
+ const doc='<!doctype html><meta charset="utf-8"><body><pre id="result">PENDING</pre><script>const content='+payload+';const results=[];const widths=[320,360,390,430,640,1024];for(const width of widths){const f=document.createElement("iframe");f.style.cssText="display:block;border:0;width:"+width+"px;height:850px";f.onload=()=>{try{const d=f.contentDocument,w=d.documentElement.clientWidth,card=d.querySelector(".wl-shell"),chart=d.querySelector(".wl-trend-svg"),past=d.querySelector(".wl-compare-past"),now=d.querySelector(".wl-compare-now"),a=past.getBoundingClientRect(),b=now.getBoundingClientRect(),r=chart.getBoundingClientRect(),c=card.getBoundingClientRect();results.push({width,pass:d.documentElement.scrollWidth<=w+1&&card.scrollWidth<=card.clientWidth+1&&a.width>0&&b.width>0&&Math.abs(a.top-b.top)<2&&a.right<=b.left+1&&b.right<=c.right+1&&r.left>=c.left-1&&r.right<=c.right+1&&r.height>0&&d.querySelector("[data-wl-open=false]>.wl-expand").getBoundingClientRect().height===0});}catch(e){results.push({width,pass:false,error:String(e)});}if(results.length===widths.length)document.querySelector("#result").textContent=JSON.stringify(results);};f.srcdoc="<!doctype html><meta charset=utf-8>"+content;document.body.append(f);}</script>';
+ const dir=mkdtempSync(join(tmpdir(),'cut30-training-layout-'));try{const path=join(dir,'test.html');writeFileSync(path,doc);const p=spawnSync(chrome,['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--user-data-dir='+join(dir,'profile'),'--virtual-time-budget=5000','--dump-dom','file://'+path],{encoding:'utf8',timeout:45000,maxBuffer:20*1024*1024});assert.equal(p.status,0,p.stderr||String(p.error));const result=p.stdout.match(/<pre id="result">([^<]+)<\/pre>/)?.[1];assert.ok(result&&result!=='PENDING');const rows=JSON.parse(result);assert.equal(rows.length,6);assert.deepEqual(rows.filter(x=>!x.pass),[]);t.diagnostic('Verified side-by-side training layout at six viewport widths');}finally{rmSync(dir,{recursive:true,force:true});}
+});

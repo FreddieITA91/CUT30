@@ -422,7 +422,7 @@
     };
     const axes=[0,.5,1].map(v=>'<line x1="'+L+'" x2="'+R+'" y1="'+n(y(v,1))+'" y2="'+n(y(v,1))+'" stroke="#434348" stroke-width=".6"/><text x="24" y="'+n(y(v,1)+3)+'" text-anchor="end" fill="#b8f34b">'+n(v*maxKg)+'</text><text x="313" y="'+n(y(v,1)+3)+'" fill="#70b8ff">'+n(v*maxReps)+'</text>').join('');
     const dates=first===latest?'<text x="'+n(x(first))+'" y="120" text-anchor="middle">'+short(first.date)+'</text>':'<text x="'+L+'" y="120" text-anchor="start">'+short(first.date)+'</text><text x="'+R+'" y="120" text-anchor="end">'+short(latest.date)+'</text>';
-    return '<section class="wl-trend" data-trend-points="'+pts.length+'"><div class="wl-trend-head"><b>Andamento</b><small>'+h(first.date)+' → '+h(latest.date)+'</small></div><div class="wl-trend-legend"><span class="wl-trend-kg">● Carico max <b>'+h(latest.kg===null?'—':latest.kg+' kg')+'</b></span><span class="wl-trend-reps">● Ripetizioni totali <b>'+latest.reps+'</b></span></div><svg class="wl-trend-svg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Andamento per seduta: carico massimo in kg e ripetizioni totali"><g font-size="9" fill="#b5b5bd">'+axes+dates+'</g>'+plot('kg',maxKg,'#b8f34b')+plot('reps',maxReps,'#70b8ff')+'</svg><small class="wl-trend-note">Una rilevazione per seduta · ripetizioni sommate, incl. riscaldamento. Carichi dichiarati, non confronti certificati tra attrezzi.'+(pts.some(p=>p.mixed)?' Carichi misti non aggregati.':'')+(data.conflicts?' Serie in conflitto escluse: '+data.conflicts+'.':'')+'</small></section>';
+    return '<section class="wl-trend" data-trend-points="'+pts.length+'"><div class="wl-trend-head"><b>Andamento</b><small>'+h(first.date)+' → '+h(latest.date)+'</small></div><div class="wl-trend-legend"><span class="wl-trend-kg">● Carico max <b>'+h(latest.kg===null?'—':latest.kg+' kg')+'</b></span><span class="wl-trend-reps">● Ripetizioni totali <b>'+latest.reps+'</b></span></div><svg class="wl-trend-svg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Andamento per seduta: carico massimo in kg e ripetizioni totali"><g font-size="9" fill="#b5b5bd">'+axes+dates+'</g>'+plot('kg',maxKg,'#b8f34b')+plot('reps',maxReps,'#70b8ff')+'</svg><small class="wl-trend-note">Una rilevazione per seduta · ripetizioni sommate, incl. riscaldamento. Storico del programma selezionato. Carichi dichiarati, non confronti certificati tra attrezzi.'+(pts.some(p=>p.mixed)?' Carichi misti non aggregati.':'')+(data.conflicts?' Serie in conflitto escluse: '+data.conflicts+'.':'')+'</small></section>';
   }
   function cardioPrescription(suggest){
     const records=cache.SchedeConfermate.filter(r=>r.data===selectedDate);
@@ -698,7 +698,7 @@
       if(!form.checkValidity()){
         const invalid=form.querySelector(':invalid'),label=invalid?.closest('label')?.textContent?.trim()||'campo obbligatorio';
         showSetFeedback(form,'Verifica '+label+': '+(invalid?.validationMessage||'valore mancante o non valido'),true);
-        invalid?.focus();form.reportValidity();return;
+        const section=invalid?.closest('details');if(section)section.open=true;invalid?.focus();form.reportValidity();return;
       }
       if(form.dataset.wlDate===localDate()&&!form.dataset.editId){try{unlockRestAudio().catch(()=>{});}catch{}}
       showSetFeedback(form,'Salvataggio e verifica su Google Sheets…');
