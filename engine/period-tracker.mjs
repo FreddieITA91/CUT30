@@ -1,3 +1,4 @@
+export {buildTrainingLevel} from './training-level.mjs';
 import {suggestTrainingDraft,byIdLatest} from './cut30.mjs';
 import {readPlanRecord} from './training-plan.mjs';
 import {WORKOUTS} from './workout-catalog.mjs';
