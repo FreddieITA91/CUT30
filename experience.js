@@ -1,6 +1,6 @@
 (function cut30Experience(){
   "use strict";
-  const AXES=[{id:"steps",label:"Passi",short:"Passi"},{id:"calories",label:"Calorie attive",short:"Calorie"},{id:"duration",label:"Tempo attività",short:"Tempo"},{id:"cardio",label:"Cardio",short:"Cardio"},{id:"consistency",label:"Costanza",short:"Costanza"}];
+  const AXES=[{id:"steps",label:"Passi",short:"Passi"},{id:"exercises",label:"Esercizi confermati",short:"Esercizi"},{id:"duration",label:"Tempo attività",short:"Tempo"},{id:"cardio",label:"Cardio",short:"Cardio"},{id:"consistency",label:"Costanza",short:"Costanza"}];
   const bound=(v,lo=0,hi=100)=>Math.min(hi,Math.max(lo,Number(v)||0));
   const tFmt=(v,d=0)=>Number(v||0).toLocaleString("it-IT",{maximumFractionDigits:d,minimumFractionDigits:d});
   const dayData=(key,day)=>state.tables[key].filter(x=>x.data===day);
@@ -8,25 +8,16 @@
   const uniqueCompleted=()=>{const m=new Map();for(const x of state.tables.Allenamenti.filter(isTraining))m.set(x.data,x);return[...m.values()]};
   const lastDays=(count=7)=>Array.from({length:count},(_,i)=>shiftDate(localDate(),i-count+1));
   const mSteps=()=>{const map=new Map();for(const x of state.tables.Misure||[])if(n(x.passi_giornalieri)>0)map.set(x.data,Math.max(n(x.passi_giornalieri),n(map.get(x.data))));return map};
-  function aggregates(){
-    const today=localDate(),week=weekStart(today),days=mondayDates(today);
-    const done=uniqueCompleted(),weekDone=done.filter(x=>days.includes(x.data));
-    const wMinutes=weekDone.reduce((a,x)=>a+n(x.durata_pesi_min)+n(x.durata_cardio_min)+n(x.durata_core_min),0);
-    const cardio=weekDone.reduce((a,x)=>a+n(x.durata_cardio_min),0);
-    const weekDaily=days.filter(d=>d<=today),steps=mSteps(),recent=lastDays();
-    const recentSteps=recent.filter(d=>steps.has(d)),avgSteps=recentSteps.length?Math.round(recentSteps.reduce((s,d)=>s+steps.get(d),0)/recentSteps.length):null;
-    const kcalEntries=weekDone.filter(x=>n(x.kcal_attive)>0),avgActive=kcalEntries.length?Math.round(kcalEntries.reduce((s,x)=>s+n(x.kcal_attive),0)/kcalEntries.length):null;
-    const targetSteps=n(cfg("passi_giorno"))||12000,cardioGoal=n(cfg("obiettivo_cardio_sett"))||300;
-    const values=[
-      avgSteps===null?null:bound(100*avgSteps/targetSteps),
-      avgActive===null?null:bound(100*avgActive/500),
-      bound(100*wMinutes/420),
-      bound(100*cardio/cardioGoal),
-      bound(100*weekDone.length/6)
-    ];
-    const comparable=values.filter(v=>v!==null);
-    const index=comparable.length?Math.round(comparable.reduce((a,x)=>a+x,0)/comparable.length):null;
-    return {today,week,weekDone,done,wMinutes,cardio,cardioGoal,avgSteps,avgActive,stepDays:recentSteps.length,activeDays:kcalEntries.length,values,index,coverage:comparable.length,days,weekDaily};
+  let trackerEngine=null,selectedPeriod="week",confirmedPlans=[];
+  window.cut30SetConfirmedPlans=rows=>{confirmedPlans=Array.isArray(rows)?rows:[];};
+  function aggregates(period=selectedPeriod){
+    if(!trackerEngine)return null;
+    return trackerEngine.buildPeriodTracker({today:localDate(),period,tables:state.tables,confirmedPlans,programFor,targetsFor,stepsGoal:n(cfg("passi_giorno"))||12000,weeklyCardioGoal:n(cfg("obiettivo_cardio_sett"))||300});
+  }
+  const display=(v,unit='')=>v===null||v===undefined?'—':tFmt(v,Number.isInteger(v)?0:1)+unit;
+  const periodLabel=a=>a.period==='day'?'Oggi':a.period==='week'?'Settimana corrente':'Mese corrente';
+  function periodSelector(a){
+    return '<section class="cx-card cx-period"><div><span class="cx-kicker">Obiettivi · '+h(a.start)+' / '+h(a.end)+'</span><h2>'+periodLabel(a)+'</h2><p class="cx-disclaimer">Consuntivo fino a oggi · previsto fino a oggi · obiettivo intero periodo</p></div><div class="cx-period-buttons" role="group" aria-label="Periodo">'+[['day','Giorno'],['week','Settimana'],['month','Mese']].map(([v,l])=>'<button type="button" data-cut-period="'+v+'" aria-pressed="'+(a.period===v)+'" class="cx-period-btn '+(a.period===v?'active':'')+'">'+l+'</button>').join('')+'</div></section>';
   }
   function makeXp(){
     const workouts=uniqueCompleted(),steps=mSteps(),start=String(cfg("data_inizio")||"2026-11-02"),nowDay=localDate();
@@ -78,22 +69,19 @@
     const cx=202,cy=160,r=110;
     const point=(index,pct)=>{const angle=-Math.PI/2+2*Math.PI*index/5;const length=r*(pct/100);return [(cx+length*Math.cos(angle)).toFixed(1),(cy+length*Math.sin(angle)).toFixed(1)].join(",");};
     const poly=scale=>AXES.map((_,i)=>point(i,scale)).join(" ");
-    const valuePts=AXES.map((_,i)=>point(i,a.values[i]===null?0:a.values[i])).join(" ");
+    const valuePts=AXES.map((_,i)=>point(i,Object.values(a.metrics)[i].score===null?0:a.values[i])).join(" ");
     const grid=[20,40,60,80,100].map((v,i)=>'<polygon points="'+poly(v)+'" class="cx-grid-poly'+(i===4?' cx-outer':'')+'"/>').join("");
     const axes=AXES.map((axis,i)=>{const outer=point(i,100);const val=a.values[i];return '<line x1="'+cx+'" y1="'+cy+'" x2="'+outer.split(",")[0]+'" y2="'+outer.split(",")[1]+'" class="cx-grid-line"/>'+(val===null?'':'<circle cx="'+point(i,val).split(",")[0]+'" cy="'+point(i,val).split(",")[1]+'" r="4.5" class="cx-dot"/>');}).join("");
     const coords=[[202,20],[349,113],[301,310],[103,310],[55,113]];
     const labels=AXES.map((axis,i)=>'<text class="cx-radar-label" x="'+coords[i][0]+'" y="'+coords[i][1]+'" text-anchor="middle">'+axis.short+'</text>').join("");
-    return '<svg class="cx-radar-svg" viewBox="0 0 404 340" role="img" aria-label="Radar di attività delle ultime settimane: passi, calorie attive, durata, cardio, costanza"><g>'+grid+axes+'<polygon points="'+valuePts+'" class="cx-radar-area"/>'+labels+'</g></svg>';
+    return '<svg class="cx-radar-svg" viewBox="0 0 404 340" role="img" aria-label="Radar del periodo: passi, esercizi, durata, cardio, costanza"><g>'+grid+axes+'<polygon points="'+valuePts+'" class="cx-radar-area"/>'+labels+'</g></svg>';
   }
   function radarCard(a){
-    const descriptions=[
-      a.avgSteps===null?'Non registrati':tFmt(a.avgSteps)+' media ('+a.stepDays+' gg)',
-      a.avgActive===null?'Non registrate':tFmt(a.avgActive)+' kcal ('+a.activeDays+' sed.)',
-      tFmt(a.wMinutes)+' min / 420',
-      tFmt(a.cardio)+' / '+tFmt(a.cardioGoal)+' min',
-      a.weekDone.length+' / 6 sedute'
-    ];
-    return '<section class="cx-card cx-radar-card"><div class="cx-head"><div><span class="cx-kicker">Ultimi 7 giorni</span><h2>Radar performance</h2></div><span class="cx-count">'+a.coverage+'/5 indicatori</span></div><div class="cx-radar-layout"><div class="cx-radar-wrap">'+axisChart(a)+'</div><div class="cx-axes">'+AXES.map((axis,i)=>'<div class="cx-axis"><div class="cx-axis-top"><span>'+axis.label+'</span><b>'+(a.values[i]===null?'—':Math.round(a.values[i])+'/100')+'</b></div>'+track(a.values[i]||0,100,'',true)+'<small>'+descriptions[i]+'</small></div>').join('')+'</div></div><p class="cx-disclaimer">Punteggi normalizzati su obiettivi di attività, non una misurazione clinica della forma fisica. I dati non registrati restano «—».</p></section>';
+    const m=Object.values(a.metrics);
+    return '<section class="cx-card cx-radar-card"><div class="cx-head"><div><span class="cx-kicker">'+periodLabel(a)+'</span><h2>Aderenza al piano</h2></div><span class="cx-count">'+a.coverage+'/5 indicatori</span></div><div class="cx-radar-layout"><div class="cx-radar-wrap">'+axisChart(a)+'</div><div class="cx-axes">'+AXES.map((axis,i)=>'<div class="cx-axis"><div class="cx-axis-top"><span>'+axis.label+'</span><b>'+(m[i].score===null?'—':Math.round(m[i].score)+'/100')+'</b></div>'+track(m[i].score||0,100,'',true)+'<small>'+display(m[i].actual)+' / '+display(m[i].expected)+' previsti fino a oggi · totale '+display(m[i].full)+'</small></div>').join('')+'</div></div><p class="cx-disclaimer">Calorie attive escluse dal punteggio. Dati mancanti non valgono come zero; valori di durata stimati dallo storico quando disponibile. Non è una misura di forma fisica.</p></section>';
+  }
+  function dailyPlanCard(a){
+    return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Piano e consuntivo</span><h2>Dettaglio giorno per giorno</h2></div></div><div class="cx-period-table"><table><thead><tr><th>Giorno / piano</th><th>Cardio eff./piano</th><th>Obiettivo cardio</th><th>Calorie registrate / stima</th><th>Tempo eff./prev.</th></tr></thead><tbody>'+a.daily.map(d=>'<tr><td>'+h(d.date)+'<small>'+h(d.program)+' · '+(d.source==='confermato'?'confermato':'riferimento attuale')+'</small></td><td>'+display(d.actual.cardio)+' / '+display(d.cardio)+' min</td><td>'+display(d.cardioGoal,' min')+'</td><td>'+display(d.actual.kcal)+' / '+display(d.calorieForecast)+' kcal</td><td>'+display(d.actual.minutes)+' / '+display(d.minutes)+' min</td></tr>').join('')+'</tbody></table></div><p class="cx-disclaimer">Stima calorie e minuti pesi: mediana di almeno due sedute precedenti dello stesso programma (massimo cinque). Non sono obiettivi calorici da raggiungere. Le quote cardio ripartiscono il target settimanale in proporzione al piano; non modificano le schede.</p></section>';
   }
   function recentNutrition(){
     const today=localDate();
@@ -110,23 +98,28 @@
     return '<section class="cx-hero"><div class="cx-hero-left"><span class="cx-kicker">Il tuo spazio di allenamento</span><h2>'+h(dayLabel(day,{weekday:"long",day:"numeric",month:"long"}))+'</h2><p>Oggi: <strong>'+h(plan)+'</strong> · '+(done?'Sessione completata':'Sessione da svolgere')+'</p><div class="cx-hero-buttons"><a class="cx-primary-action" href="#training" data-nav="training">'+icon("barbell")+' Apri allenamento</a><button class="cx-ghost-action" data-cut-refresh>'+icon("refresh")+' Aggiorna dati</button></div></div><div class="cx-score-circle"><strong>'+(score===null?'—':score)+'</strong><small>indice attività<br/>/100</small><span>'+(a.coverage<5?'Provvisorio':'Calcolato')+'</span></div></section>';
   }
   function xpBanner(){
-    const a=aggregates(),xp=makeXp(),ready=token&&tokenExpires>Date.now()+30000;
+    const xp=makeXp(),ready=token&&tokenExpires>Date.now()+30000;
     return '<section class="cx-xp-banner" aria-label="Livello CUT30 ed esperienza accumulata"><div class="cx-xp-emblem">'+icon("trophy")+'<b>'+xp.level+'</b></div><div class="cx-xp-name"><strong>Livello CUT30 '+xp.level+'</strong><span>'+tFmt(xp.total)+' XP accumulati · '+tFmt(xp.remaining)+' XP al prossimo livello</span></div><div class="cx-xp-bar">'+track(xp.into,xp.step)+'</div><div class="cx-sync-state '+(ready?'cx-online':'')+'"><span class="cx-sync-dot"></span>'+(ready?'Google collegato':'Archivio locale')+'</div></section>';
   }
   function cards(a){
-    const steps=a.avgSteps===null?'—':tFmt(a.avgSteps),wk=a.weekDone.length;
+    const today=aggregates('day'),m=a.metrics;
     const records=[
-      ["shoe","Passi medi",steps,a.avgSteps===null?"Passi totali non registrati":"Ultimi "+a.stepDays+" giorni con dato"],
-      ["fire","Calorie attive",a.avgActive===null?"—":tFmt(a.avgActive)+" kcal",a.avgActive===null?"Dati non registrati":"Media su "+a.activeDays+" sedute"],
-      ["clock","Tempo settimanale",tFmt(a.wMinutes)+" min","Sala pesi + cardio + core"],
-      ["barbell","Sedute completate",wk+" / 6","Questa settimana"],
-      ["pulse","Cardio",tFmt(a.cardio)+" / "+tFmt(a.cardioGoal)+" min","Obiettivo settimanale"]
+      ["shoe","Passi registrati",display(m.steps.actual),display(m.steps.expected)+" previsti fino a oggi · "+a.stepDays+"/"+a.elapsedDays+" gg con dato"],
+      ["fire","Calorie attive "+periodLabel(a).toLowerCase(),display(a.calories.actual," kcal"),(a.calories.partial?"Dati parziali · ":"")+"Totale registrato · stima periodo "+display(a.calories.forecast," kcal")],
+      ["fire","Calorie attive oggi",display(today.calories.actual," kcal"),today.daily[0].hasWorkout?"Dati della seduta di oggi":"Nessun allenamento registrato oggi"],
+      ["clock","Tempo attività",display(m.minutes.actual," min"),display(m.minutes.expected)+" previsti fino a oggi · "+display(m.minutes.full)+" totali"],
+      ["barbell","Sedute completate",display(m.sessions.actual)+" / "+display(m.sessions.full),"Previste fino a oggi: "+display(m.sessions.expected)],
+      ["pulse","Cardio",display(m.cardio.actual)+" / "+display(m.cardio.full)+" min","Piano "+display(a.cardioPlanned)+" min · obiettivo fino a oggi "+display(m.cardio.expected)+" min"]
     ];
     return '<section class="cx-stats">'+records.map(x=>'<div class="cx-stat"><div class="cx-stat-icon">'+icon(x[0])+'</div><span>'+x[1]+'</span><strong>'+x[2]+'</strong><small>'+x[3]+'</small></div>').join('')+'</section>';
   }
   function weekCard(a){
-    const today=localDate(),dates=mondayDates(today);
-    return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Calendario</span><h2>Costanza settimanale</h2></div><a href="#calendar" data-nav="calendar" class="cx-link">Calendario</a></div><div class="cx-week">'+dates.map(d=>'<div class="cx-weekday '+(isDone(d)?'completed':d===today?'today':d>today?'future':'')+'"><small>'+dayLabel(d,{weekday:"short"}).slice(0,3)+'</small><span>'+(isDone(d)?icon("check"):parseDate(d).getDate())+'</span></div>').join('')+'</div><div class="cx-week-footer"><span>'+a.weekDone.length+' giorni completati su 6</span><span>'+tFmt(a.cardio)+' / '+tFmt(a.cardioGoal)+' min cardio</span></div>'+track(a.cardio,a.cardioGoal)+'</section>';
+    const week=aggregates('week'),dates=week.daily;
+    return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Calendario</span><h2>Costanza settimanale</h2></div><a href="#calendar" data-nav="calendar" class="cx-link">Calendario</a></div><div class="cx-week">'+dates.map(d=>'<div class="cx-weekday '+(d.actual.done?'completed':d.date===a.today?'today':d.date>a.today?'future':'')+'"><small>'+dayLabel(d.date,{weekday:"short"}).slice(0,3)+'</small><span>'+(d.actual.done?icon("check"):parseDate(d.date).getDate())+'</span></div>').join('')+'</div><div class="cx-week-footer"><span>'+week.metrics.sessions.actual+' / '+week.metrics.sessions.full+' sedute</span><span>'+display(week.metrics.cardio.actual)+' / '+display(week.metrics.cardio.full)+' min cardio</span></div>'+track(week.metrics.cardio.actual,week.metrics.cardio.full)+'<p class="cx-disclaimer">Piano '+display(week.cardioPlanned,' min')+' · differenza rispetto all’obiettivo '+display(week.cardioGap,' min')+'.</p></section>';
+  }
+  function periodNutrition(a){
+    const labels={kcal:'Calorie assunte',proteine:'Proteine',carboidrati:'Carboidrati',grassi:'Grassi',fibre:'Fibre'};
+    return '<section class="cx-card"><div class="cx-head"><div><span class="cx-kicker">Alimentazione · '+periodLabel(a)+'</span><h2>Obiettivi nutrizionali</h2></div><a href="#nutrition" data-nav="nutrition" class="cx-link">Diario</a></div>'+Object.entries(a.nutrition).map(([k,m])=>'<div class="cx-macro-line"><div><span>'+labels[k]+'</span><b>'+display(m.actual)+' / '+display(m.expected)+' '+(k==='kcal'?'kcal':'g')+'</b></div>'+track(m.actual||0,m.expected||1,'',true)+'<small>Totale periodo: '+display(m.full)+'</small></div>').join('')+'<p class="cx-disclaimer">Registrazioni presenti in '+a.nutritionDays+'/'+a.elapsedDays+' giorni. Un giorno senza diario non dimostra assunzione nulla.</p></section>';
   }
   function muscleSummary(){
     const muscle=progressByMuscle(localDate());
@@ -135,7 +128,8 @@
   }
   function fullDashboard(){
     const a=aggregates(),xp=makeXp();
-    return '<div class="cx-page">'+hero(a,xp)+cards(a)+'<div class="cx-main-grid">'+radarCard(a)+dailyMacros()+'</div><div class="cx-main-grid">'+weekCard(a)+muscleSummary()+'</div><section class="cx-card cx-footnote"><div><b>Indice attività '+(a.index===null?'—':a.index+'/100')+'</b><p>Valutazione indicativa costruita sui dati inseriti. Non misura VO₂max, forza massima o composizione corporea: per questi servono rilevazioni dedicate.</p></div><a href="#progress" data-nav="progress" class="cx-link">Scopri come funziona</a></section></div>';
+    if(!a)return '<section class="cx-card">Caricamento obiettivi…</section>';
+    return '<div class="cx-page">'+hero(a,xp)+periodSelector(a)+cards(a)+'<div class="cx-main-grid">'+radarCard(a)+periodNutrition(a)+'</div><div class="cx-main-grid">'+weekCard(a)+muscleSummary()+'</div>'+dailyPlanCard(a)+'<section class="cx-card cx-footnote"><div><b>Indice attività '+(a.index===null?'—':a.index+'/100')+'</b><p>Valutazione indicativa costruita sui dati inseriti. Non misura VO₂max, forza massima o composizione corporea: per questi servono rilevazioni dedicate.</p></div><a href="#progress" data-nav="progress" class="cx-link">Scopri come funziona</a></section></div>';
   }
   function anatomySvg(groups,small=false){
     const val=g=>{const v=groups[g];return v&&v.planned?bound(v.done/v.planned):0};
@@ -179,8 +173,9 @@
   }
   renderProgress=function(){
     const a=aggregates(),base=nativeProgress();
+    if(!a)return base;
     const legend=base.replace(/<span class="tiny" style="min-width:45px;text-align:right">(\d+)\/(\d+)<\/span>/g,function(_,done,planned){return '<span class="tiny cx-percent" style="min-width:45px;text-align:right">'+(Number(planned)?Math.round(100*Number(done)/Number(planned)):0)+'%</span>';});
-    return '<div class="cx-section-lead"><div><span class="cx-kicker">Analisi dell’attività</span><h2>Progressi misurabili</h2><p>Radar attività, peso corporeo e distribuzione del volume di lavoro muscolare.</p></div></div>'+radarCard(a)+xpCard()+legend;
+    return '<div class="cx-section-lead"><div><span class="cx-kicker">Analisi dell’attività</span><h2>Progressi misurabili</h2><p>Radar attività, peso corporeo e distribuzione del volume di lavoro muscolare.</p></div></div>'+periodSelector(a)+radarCard(a)+dailyPlanCard(a)+xpCard()+legend;
   };
   render=function(){
     const ok=originalRender();if(ok===false)return false;
@@ -198,10 +193,11 @@
     refreshBusy=true;
     try{
       const params=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE"});
-      for(const tab of Object.keys(TABLES))params.append("ranges","'"+tab+"'!A1:O2000");
+      for(const tab of Object.keys(TABLES))params.append("ranges","'"+tab+"'!A:"+String.fromCharCode(64+TABLES[tab].length));
       const result=await googleApi("/values:batchGet?"+params.toString());
       const merged={};
       const names=Object.keys(TABLES);
+      if(result.valueRanges?.length!==names.length)throw new Error("Lettura cloud incompleta");
       for(let i=0;i<names.length;i++){
         const tab=names[i],rows=result.valueRanges?.[i]?.values||[],headers=TABLES[tab];
         if(rows.length&&rows[0].some((v,k)=>v!==headers[k]))throw new Error("Schema non valido in "+tab);
@@ -224,6 +220,8 @@
   }
   function startup(){
     document.addEventListener("click",e=>{
+      const selector=e.target.closest("[data-cut-period]");
+      if(selector){e.preventDefault();selectedPeriod=selector.dataset.cutPeriod;render();return;}
       const btn=e.target.closest("[data-cut-refresh]");
       if(!btn)return;
       e.preventDefault();e.stopImmediatePropagation();refreshCloud(false);
@@ -232,6 +230,7 @@
     window.setTimeout(()=>refreshCloud(true),650);
     window.setInterval(()=>{if(document.visibilityState==="visible"&&Date.now()-lastRemoteCheck>300000)refreshCloud(true);},120000);
     document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRemoteCheck>120000)refreshCloud(true);});
+    import("./engine/period-tracker.mjs").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
     render();
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",startup,{once:true});else startup();

@@ -242,3 +242,5 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(50,218,199,.5);bo
 .cx-xp-breakdown span{font-size:11px;color:#b6cada}
 .cx-xp-breakdown strong{font-size:12px;color:#69f0d9;white-space:nowrap}
 @media(max-width:440px){.cx-xp-breakdown{grid-template-columns:1fr}}
+
+.cx-period{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}.cx-period h2{margin:5px 0}.cx-period-buttons{display:flex;gap:5px;flex-wrap:wrap}.cx-period-btn{padding:9px 13px;border:1px solid #38566a;border-radius:8px;background:#142b3e;color:#c9d9e5;cursor:pointer;font:inherit}.cx-period-btn.active{background:#1bd5c2;color:#082b35;border-color:#1bd5c2;font-weight:700}.cx-period-table{overflow-x:auto}.cx-period-table table{border-collapse:collapse;width:100%;font-size:12px}.cx-period-table th,.cx-period-table td{text-align:left;padding:10px 8px;border-bottom:1px solid #314a5e;white-space:nowrap}.cx-period-table td small{display:block;opacity:.75;margin-top:4px}.cx-period-table th{font-weight:600;color:#9cc2d0}
