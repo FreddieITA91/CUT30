@@ -380,6 +380,7 @@
   function toggleExercise(date,id){const key=openKey(date,id);if(logOpen.has(key))logOpen.delete(key);else logOpen.add(key);}
   function collapseCompleted(date,id){return logOpen.delete(openKey(date,id));}
 
+  const logKey=(date,id)=>String(state.prefs.sheetId)+'|'+date+'|'+id;
   function logPlan(){
     try{const saved=cache.SchedeConfermate.find(x=>x.data===selectedDate);
       return saved?planEngine.readPlanRecord(saved):isDone(selectedDate)?null:createPlan(selectedDate);
