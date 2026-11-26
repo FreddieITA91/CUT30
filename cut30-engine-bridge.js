@@ -287,6 +287,74 @@
       toast('Audit privato archiviato e verificato');
     }finally{auditSaving=false;}
   }
+  // One persistent in-page countdown, independent of workout re-renders.
+  let restEngine=null,restTimer=null,restAlerted=false,restAudio=null,restSound='idle',restWake=null,restWakePending=false;
+  function unlockRestAudio(){
+    try{
+      const Audio=window.AudioContext||window.webkitAudioContext;
+      if(!Audio){restSound='unavailable';return Promise.resolve(false);}
+      restAudio??=new Audio();
+      // Must be requested inside the user gesture, before the cloud write awaits.
+      const p=restAudio.resume();
+      return Promise.resolve(p).then(()=>{restSound=restAudio.state==='running'?'ready':'blocked';paintRest();return restSound==='ready';}).catch(()=>{restSound='blocked';paintRest();return false;});
+    }catch{restSound='unavailable';return Promise.resolve(false);}
+  }
+  function playRestSound(){
+    if(!restAudio||restAudio.state!=='running'){restSound='blocked';return false;}
+    try{
+      const t=restAudio.currentTime;
+      for(let i=0;i<3;i++){
+        const o=restAudio.createOscillator(),g=restAudio.createGain(),start=t+i*.26;
+        o.type='sine';o.frequency.value=i===2?1046.5:784;
+        g.gain.setValueAtTime(.001,start);g.gain.exponentialRampToValueAtTime(.23,start+.025);g.gain.exponentialRampToValueAtTime(.001,start+.19);
+        o.connect(g);g.connect(restAudio.destination);o.start(start);o.stop(start+.21);
+      }
+      return true;
+    }catch{restSound='blocked';return false;}
+  }
+  function releaseRestWake(){const lock=restWake;restWake=null;if(lock)Promise.resolve(lock.release()).catch(()=>{});}
+  async function holdRestWake(){
+    if(restWake||restWakePending||!restTimer||restAlerted||document.visibilityState!=='visible'||!navigator.wakeLock?.request)return;
+    restWakePending=true;
+    try{const lock=await navigator.wakeLock.request('screen');if(!restTimer||restAlerted||document.visibilityState!=='visible'){await lock.release();return;}restWake=lock;lock.addEventListener('release',()=>{if(restWake===lock)restWake=null;});}catch{}finally{restWakePending=false;}
+  }
+  function restNode(){
+    let node=document.querySelector('#cut30-rest-timer');
+    if(node)return node;
+    node=document.createElement('aside');node.id='cut30-rest-timer';node.className='wl-rest-float';node.hidden=true;node.setAttribute('aria-label','Timer di recupero');
+    node.innerHTML='<div class="wl-rest-top"><div><b data-rest-title>Recupero</b><small data-rest-exercise></small></div><strong data-rest-time aria-label="Tempo rimanente"></strong></div><div class="wl-rest-track"><i data-rest-progress></i></div><div class="wl-rest-controls"><button type="button" data-rest-add>+30 s</button><button type="button" data-rest-audio>Suono</button><button type="button" data-rest-skip>Salta</button></div><small class="wl-rest-note" data-rest-note role="status"></small>';
+    document.body.append(node);return node;
+  }
+  function paintRest(){
+    if(!restEngine)return;
+    const node=restNode();node.hidden=!restTimer;document.body.classList.toggle('wl-rest-active',!!restTimer);
+    if(!restTimer)return;
+    const left=restEngine.remainingSeconds(restTimer,Date.now());
+    node.querySelector('[data-rest-title]').textContent=restAlerted?'Recupero terminato':'Recupero';
+    node.querySelector('[data-rest-exercise]').textContent=restTimer.name;
+    node.querySelector('[data-rest-time]').textContent=restEngine.formatRecovery(left);
+    node.querySelector('[data-rest-progress]').style.width=Math.min(100,left/restTimer.seconds*100)+'%';
+    node.classList.toggle('wl-rest-done',restAlerted);
+    node.querySelector('[data-rest-skip]').textContent=restAlerted?'Chiudi':'Salta';
+    node.querySelector('[data-rest-audio]').textContent=restAudio?.state==='running'?'Prova suono':'Attiva suono';
+    const note=restAlerted?'Tempo scaduto. Riprendi quando sei pronto.':restAudio?.state==='running'?'Avviso sonoro attivo · recupero consigliato':'Tocca Attiva suono se l’audio è bloccato dal browser.';
+    const noteNode=node.querySelector('[data-rest-note]');if(noteNode.textContent!==note)noteNode.textContent=note;
+  }
+  function tickRest(){
+    if(!restEngine||!restTimer)return;
+    if(!restAlerted&&restEngine.remainingSeconds(restTimer,Date.now())===0){
+      restAlerted=true;releaseRestWake();
+      const played=playRestSound();
+      try{navigator.vibrate?.([200,100,200]);}catch{}
+      toast(played?'Recupero terminato':'Recupero terminato · audio non disponibile');
+    }
+    paintRest();
+  }
+  function stopRest(){restTimer=null;restAlerted=false;releaseRestWake();paintRest();}
+  function beginRest(ex,rec){
+    restTimer=restEngine.startRecovery({exercise:ex,recordId:rec.id,date:rec.data,now:Date.now()});restAlerted=false;
+    paintRest();holdRestWake();
+  }
   let logEngine, flowEngine, muscleEngine, guideUrl=null;
   const logDrafts=new Map(), logOpen=new Map(), sessionDrafts=new Map(), openManual=new Set();
   const logItems=(items=logExercises())=>items.map(ex=>({id:ex.id,done:exerciseDone(ex,items)}));
@@ -309,7 +377,7 @@
     const rows=setRows(ex),historical=cache.Carichi.filter(x=>x.data<selectedDate&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id),lastDay=historical.map(x=>x.data).sort().at(-1),past=historical.filter(x=>x.data===lastDay).sort((a,b)=>Number(a.numero_serie)-Number(b.numero_serie));
     const count=logEngine.workingCount(ex,rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex,selectedDate,items),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
     const names=logEngine.namesFor(ex),key=logKey(selectedDate,ex.id),draft=logDrafts.get(key)||{},last=past.filter(x=>logEngine.unitParts(x.unita_carico)).at(-1),unit=logEngine.unitParts(last?.unita_carico),variant=draft.esercizio||names.find(v=>logEngine.norm(v)===logEngine.norm(last?.esercizio))||names[0],guide=logEngine.guideFor(ex,variant);
-    const next=logEngine.nextSet(ex,rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadedAt||future;
+    const restSeconds=restEngine?.recoverySeconds(ex),next=logEngine.nextSet(ex,rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadedAt||future;
     const val=(k,fallback='')=>h(draft[k]??fallback);
     const history=past.length?'<span class="wl-history-date">'+h(past[0].data)+'</span> '+past.map(r=>'<span class="wl-hist" title="'+h(r.unita_carico)+'">'+h(r.esercizio)+' · S'+h(r.numero_serie)+' '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'<small>'+h(r.unita_carico||'Unità non identificata')+'</small></span>').join(' '):loadedAt?'Nessuna serie precedente':'Storico da caricare';
     const refs=(ex.references||[]).map(r=>'<span class="wl-ref">'+h(r.exercise)+' · '+h(r.unit)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+': '+h(r.reference_kg??'—')+' kg × '+h(r.reference_reps??'—')+(r.conditional_target_reps==null?'':' → '+h(r.conditional_target_reps)+' reps')+'<small>'+h(r.load_increase_allowed?'Incremento minimo solo se tecnica e recupero adeguati.':r.note||'')+'</small></span>').join('');
@@ -317,7 +385,7 @@
     const opened=currentOpen()===ex.id;
     const image=guide?'<img class="wl-photo" src="'+h(guide.frames[0])+'" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">':'';
     const setList=rows.map(r=>'<div class="wl-set-record"><button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||disabled||!logEngine.unitParts(r.unita_carico)||!logEngine.namesFor(ex).some(v=>logEngine.norm(v)===logEngine.norm(r.esercizio))?'disabled':'')+'>S'+h(r.numero_serie)+' · '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+' <small>'+h(engine.readSetEffort(r.origine).tipo_serie)+'</small></button><button type="button" class="wl-delete" data-wl-delete="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" aria-label="Elimina serie '+h(r.numero_serie)+'" '+(disabled?'disabled':'')+'>Elimina</button></div>').join('');
-    return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+'</small><small>Ultimo: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
+    return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+(restSeconds?' · Rec. '+restEngine.formatRecovery(restSeconds):'')+'</small><small>Ultimo: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
       '<div class="wl-expand" '+(opened?'':'hidden')+'>'+
       '<div class="wl-comparison"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div><div><span>ULTIMA REGISTRAZIONE</span><div class="wl-history">'+history+(past.length?'<button type="button" class="wl-history-link" data-wl-history-day="'+h(past[0].data)+'">Apri registrazioni di questa data</button>':'')+'</div></div></div>'+
       '<div class="wl-meter" aria-label="Serie allenanti verificate">'+Array.from({length:ex.sets},(_,i)=>'<i class="'+(i<count?'filled':'')+'"></i>').join('')+'</div>'+
@@ -471,6 +539,8 @@
       const after=logEngine.workingCount(ex,logEngine.matching(ex,cache.Carichi.filter(x=>x.data===date)),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
       const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie')});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
+      if(restEngine&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||logItems().some(x=>x.id!==ex.id&&!x.done),exercise:ex}))beginRest(ex,rec);
+      else if(!existing&&date===localDate())stopRest();
       toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
     }finally{setSaving=false;}
     await refreshCloud(true);
@@ -485,9 +555,9 @@
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.7.1');
+      const mod=await import('./engine/delete-record.mjs?v=3.7.2');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
-      assertSource();cache.Carichi=parseTable(after);window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),sheet);
+      assertSource();if(restTimer?.recordId===id)stopRest();cache.Carichi=parseTable(after);window.cut30SetLoadEvidence?.(cache.Carichi,Date.now(),sheet);
       const remaining=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&(!x.programma||x.programma===program)),engine.readSetEffort);
       if(before>=ex.sets&&remaining<ex.sets){
         // Revoke all matching completion flags, including historical aliases, not other exercises.
@@ -547,6 +617,7 @@
     const form=e.target;
     if(form.dataset.pending==='1')return;
     form.dataset.pending='1';
+    if(form.dataset.wlForm&&form.dataset.wlDate===localDate()&&!form.dataset.editId)unlockRestAudio();
     const task=form.dataset.wlForm?submitSet(form):form.id==='cut30-cardio-form'?submitCardio(form):Promise.resolve().then(()=>computeRecipe(form));
     Promise.resolve(task).catch(err=>{toast('CUT30 Engine: '+err.message);console.error('CUT30 Engine input:',err.message);}).finally(()=>{form.dataset.pending='0';});
   }
@@ -563,6 +634,10 @@
     if(result)result.textContent='Dati modificati: ricalcola la porzione prima di registrarla.';
   }
   function onClick(e){
+    if(e.target.closest('[data-action="finish-training"]')&&restTimer?.date===selectedDate&&isDone(selectedDate))stopRest();
+    if(e.target.closest('[data-rest-skip]')){stopRest();return;}
+    if(e.target.closest('[data-rest-add]')){if(restTimer){restTimer=restEngine.extendRecovery(restTimer,Date.now(),30);restAlerted=false;paintRest();holdRestWake();}return;}
+    if(e.target.closest('[data-rest-audio]')){unlockRestAudio().then(ok=>{if(ok)playRestSound();paintRest();});return;}
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
     const history=e.target.closest('[data-wl-history-day]');if(history){selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){openManual.add(selectedDate);setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}
@@ -595,8 +670,9 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.2');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
-      render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
+      render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);
       document.addEventListener('click',onClick);
       document.addEventListener('input',onInput);
