@@ -110,13 +110,16 @@
       '<p class="tiny muted">'+(ex.status==='storico_non_comparabile'?'Storico senza identificazione attrezzo: registrare riferimento comparabile.':'Nessun riferimento comparabile disponibile.')+'</p>')+'</div></div>').join('');
   }
   async function loadCardio(){
+    const sheet=state.prefs.sheetId,started=Date.now();
     const meta=await googleApi('?fields=sheets.properties.title');
     const exists=meta.sheets?.some(s=>s.properties.title==='CardioSegmenti');
-    if(!exists){cache.CardioSegmenti=[];cardioLoaded=true;return false;}
+    if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante lettura cardio');
+    if(!exists){cache.CardioSegmenti=[];cardioLoaded=true;window.cut30SetCardioEvidence?.([],started,sheet);return false;}
     const r=await googleApi('/values/'+encodeURIComponent("'CardioSegmenti'!A:O")+'?valueRenderOption=UNFORMATTED_VALUE');
     const values=r.values||[];
     if(values.length&&cardioEngine.CARDIO_HEADERS.some((k,i)=>values[0][i]!==k))throw new Error('Schema CardioSegmenti inatteso');
-    cache.CardioSegmenti=parseTable(values);cardioLoaded=true;return true;
+    if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato durante lettura cardio');
+    cache.CardioSegmenti=parseTable(values);cardioLoaded=true;window.cut30SetCardioEvidence?.(cache.CardioSegmenti,started,sheet);return true;
   }
   function segmentPanel(){
     let s=null;
@@ -348,8 +351,10 @@
     const registered=ex.reduce((s,x)=>s+logEngine.workingCount(x,setRows(x),engine.readSetEffort),0);
     const value=(v,unit)=>v===null?'—':h(fmtN(v,1))+unit;
     const title=closed?'Allenamento concluso':ready?'Esercizi completati':'Riepilogo della seduta';
+    const score=closed?window.cut30LevelForDate?.(selectedDate):null,ev=score?.event,labels={improvement:'Miglioramento',maintenance:'Mantenimento',decline:'Calo ripetuto',baseline:'Costanza / riferimento',unknown:'Non valutabile'};
+    const xp=closed?'<div class="wl-xp-result"><span>'+ (ev?labels[ev.outcome]:'Prestazione non valutabile')+(score?.provisional?' · dati parziali':'')+'</span><b>'+(ev?(ev.applied>0?'+':'')+ev.applied+' XP':'—')+'</b></div>':'';
     return '<section class="wl-session-end '+(closed||ready?'wl-ready':'')+'"><h3>'+title+'</h3><p>'+(closed?'Seduta confermata nel diario.':ready?'Registra i dati effettivi della seduta e conferma la conclusione.':'Riepilogo delle registrazioni effettuate.')+'</p>'+
-      '<div class="wl-end-grid"><div><small>Esercizi</small><b>'+done+'/'+ex.length+'</b></div><div><small>Serie allenanti verificate</small><b>'+(loadedAt?registered:'—')+'</b></div><div><small>Tempo registrato</small><b>'+value(metrics.minutes,' min')+(metrics.partialMinutes&&metrics.minutes!==null?'*':'')+'</b></div><div><small>Cardio</small><b>'+value(metrics.cardio,' min')+'</b></div><div><small>Calorie attive</small><b>'+value(metrics.kcal,' kcal')+'</b></div></div>'+
+      xp+'<div class="wl-end-grid"><div><small>Esercizi</small><b>'+done+'/'+ex.length+'</b></div><div><small>Serie allenanti verificate</small><b>'+(loadedAt?registered:'—')+'</b></div><div><small>Tempo registrato</small><b>'+value(metrics.minutes,' min')+(metrics.partialMinutes&&metrics.minutes!==null?'*':'')+'</b></div><div><small>Cardio</small><b>'+value(metrics.cardio,' min')+'</b></div><div><small>Calorie attive</small><b>'+value(metrics.kcal,' kcal')+'</b></div></div>'+
       (metrics.partialMinutes&&metrics.minutes!==null?'<p>* Durate parziali.</p>':'')+
       '<button type="button" class="btn btn-quiet wl-session-data" data-wl-session-data>Apri dati della seduta</button>'+
       '<button type="button" class="btn wl-finish" data-action="finish-training" '+(selectedDate>localDate()?'disabled':'')+'>'+(closed?'Aggiorna sessione':'Concludi allenamento')+'</button></section>';
@@ -557,6 +562,7 @@
   async function init(){
     try{
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
+      window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();return result;};
