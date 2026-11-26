@@ -78,7 +78,7 @@
   async function loadLevelEngine(retry=false){
     if(levelFlight)return levelFlight;
     levelStatus='loading';levelError='';
-    levelFlight=(async()=>{try{const mod=await import('./engine/training-level.mjs?v=3.7.3'+(retry?'&retry='+Date.now():''));
+    levelFlight=(async()=>{try{const mod=await import('./engine/training-level.mjs?v=3.7.4'+(retry?'&retry='+Date.now():''));
       if(typeof mod.buildTrainingLevel!=='function')throw Error('Modulo livello non aggiornato');
       levelEngine=mod;levelCache=null;levelStatus='ready';
     }catch(err){levelStatus='error';levelError=String(err?.message||err);console.error('CUT30 level module:',err);}
@@ -283,7 +283,7 @@
       if(!xp||xp.provisional||!xp.calibrated||loadEvidence.sheetId!==sheet||cardioEvidence.sheetId!==sheet||loadEvidence.at<stamp||cardioEvidence.at<stamp||!state.lastSync||Date.parse(state.lastSync)<stamp-120000||state.dirtyConfig?.length){
         if(interactive)toast('Archivio non aggiornato: sincronizza il diario, conferma il profilo e riprova');return;
       }
-      const mod=await import('./engine/experience-ledger.mjs?v=3.7.3');
+      const mod=await import('./engine/experience-ledger.mjs?v=3.7.4');
       const result=await mod.archiveExperience({api:googleApi,assertSource,xp,at:new Date().toISOString()});
       xpArchiveState={sheet,at:Date.now(),inserted:result.inserted};if(interactive)toast('Esperienza verificata: '+result.inserted+' nuove valutazioni');
     }catch(err){if(interactive)toast('Archivio esperienza: '+err.message);else console.warn('CUT30 experience archive:',err.message);}
@@ -363,7 +363,7 @@
     window.setInterval(()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>300000)refreshCloud(true);loadMuscleHistory();}},60000);
     document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){if(Date.now()-lastRemoteCheck>120000)refreshCloud(true);loadMuscleHistory();}});
     loadLevelEngine();
-    import("./engine/period-tracker.mjs?v=3.7.3").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
+    import("./engine/period-tracker.mjs?v=3.7.4").then(m=>{trackerEngine=m;render();}).catch(err=>{console.error("CUT30 period tracker:",err);});
     render();
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",startup,{once:true});else startup();

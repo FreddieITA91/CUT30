@@ -1,3 +1,4 @@
+import {resolveExercise} from './muscle-coverage.mjs';
 // CUT30 training log: public-domain exercise imagery, no personal data.
 const source='https://raw.githubusercontent.com/yuhonas/free-exercise-db/f00c92c7dcf1216a928a52c3706c7ce8e2f71ed5/exercises/';
 const guides={
@@ -68,4 +69,29 @@ export async function photoGif(frames){
  const canvas=document.createElement('canvas');canvas.width=320;canvas.height=240;const ctx=canvas.getContext('2d',{willReadFrequently:true});
  const data=images.map(img=>{ctx.fillStyle='#fff';ctx.fillRect(0,0,320,240);const scale=Math.min(320/img.width,240/img.height),w=img.width*scale,h=img.height*scale;ctx.drawImage(img,(320-w)/2,(240-h)/2,w,h);return ctx.getImageData(0,0,320,240).data;});
  return URL.createObjectURL(new Blob([encodeGif(320,240,data)],{type:'image/gif'}));
+}
+
+export const UNKNOWN_EQUIPMENT='non identificato';
+export function sessionRows(ex,rows,date,program,items){
+ return rows.filter(r=>r.data===date&&r.programma===program&&resolveExercise(r.esercizio,items)?.id===ex.id).sort((a,b)=>Number(a.numero_serie)-Number(b.numero_serie));
+}
+export function previousSessionRows(ex,rows,date,program,items){
+ const past=rows.filter(r=>r.data<date&&r.programma===program&&resolveExercise(r.esercizio,items)?.id===ex.id);
+ const day=past.map(r=>r.data).sort().at(-1);
+ return day?sessionRows(ex,past,day,program,items):[];
+}
+// Completion counts actual unique working sets, not cross-machine comparisons.
+export function sessionWorkingCount(rows,readEffort){
+ const groups=new Map();
+ for(const r of rows){
+ const num=Number(r.numero_serie);
+ if(!Number.isInteger(num)||num<1)continue;
+ if(!groups.has(num))groups.set(num,[]);groups.get(num).push(r);
+ }
+ return [...groups.values()].filter(g=>g.length===1&&readEffort(g[0].origine).tipo_serie==='allenante'&&g[0].carico_kg!==''&&g[0].carico_kg!=null&&Number.isFinite(Number(g[0].carico_kg))&&Number(g[0].carico_kg)>=0&&Number.isInteger(Number(g[0].ripetizioni))&&Number(g[0].ripetizioni)>0).length;
+}
+export function nextSessionSet(rows){
+ const occupied=new Set(rows.map(r=>Number(r.numero_serie)));
+ for(let i=1;i<=25;i++)if(!occupied.has(i))return i;
+ return null;
 }
