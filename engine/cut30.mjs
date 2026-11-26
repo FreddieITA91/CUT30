@@ -197,7 +197,7 @@ export function suggestTrainingDraft(rawTables, asOf, options={}) {
 const normalized = value => String(value||'').trim().toLowerCase().replace(/\s+/g,' ');
 function equipmentIdentity(value) {
   const match=String(value||'').trim().match(/^(kg macchina|kg per mano|kg totale)\s*\|\s*palestra\s+([^|]+)\s*\|\s*attrezzo\s+([^|]+)$/i);
-  if (!match || !match[2].trim() || !match[3].trim()) return null;
+  if (!match || !match[2].trim() || !match[3].trim() || /^(non identificato|non specificato|corpo libero)$/i.test(match[3].trim())) return null;
   return {unit:match[1].toLowerCase(),gym:match[2].trim(),equipment:match[3].trim()};
 }
 function repLimits(dose) {

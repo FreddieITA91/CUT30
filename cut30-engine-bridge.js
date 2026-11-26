@@ -371,7 +371,7 @@
   const logFeedback=new Map();
   const logDrafts=new Map(), logOpen=new Map(), sessionDrafts=new Map(), openManual=new Set();
   const logItems=(items=logExercises())=>items.map(ex=>({id:ex.id,done:exerciseDone(ex,items)}));
-  function exerciseDone(ex,items=logExercises()){return checkedExercise(ex,selectedDate,items)||logEngine.workingCount(ex,setRows(ex),engine.readSetEffort)>=ex.sets;}
+  function exerciseDone(ex,items=logExercises()){return checkedExercise(ex,selectedDate,items)||logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort)>=ex.sets;}
   function setOpen(date,id){logOpen.set(date,id);}
   function currentOpen(items){if(!logOpen.has(selectedDate))setOpen(selectedDate,flowEngine.initialOpen(logItems(items)));else if(items&&!openManual.has(selectedDate)&&logOpen.get(selectedDate)!==null){const rows=logItems(items);if(rows.find(x=>x.id===logOpen.get(selectedDate))?.done||!rows.some(x=>x.id===logOpen.get(selectedDate)))setOpen(selectedDate,flowEngine.initialOpen(rows));}return logOpen.get(selectedDate);}
   function advanceOpen(date,id,items){if(logOpen.get(date)!==id)return false;openManual.delete(date);setOpen(date,flowEngine.nextOpen(items,id,id));return true;}
@@ -383,18 +383,19 @@
     }catch{return null;}
   }
   function logExercises(){const p=logPlan();return p?.exercises||WORKOUTS[programFor(selectedDate)]||[];}
-  function setRows(ex){const items=logExercises();return (loadReady()?cache.Carichi:[]).filter(x=>x.data===selectedDate&&(!x.programma||x.programma===programFor(selectedDate))&&(muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id||logEngine.matching(ex,[x]).length));}
+  function setRows(ex){return logEngine.sessionRows(ex,loadReady()?cache.Carichi:[],selectedDate,programFor(selectedDate),logExercises());}
+  function priorRows(ex,items=logExercises()){return logEngine.previousSessionRows(ex,loadReady()?cache.Carichi:[],selectedDate,programFor(selectedDate),items);}
   function checkedExercise(ex,date=selectedDate,items=logExercises()){const matches=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===programFor(date)&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id).sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));return String(matches[0]?.completato).toLowerCase()==='true';}
   const selectOptions=(values,selected)=>values.map(v=>'<option value="'+h(v)+'" '+(String(v)===String(selected)?'selected':'')+'>'+h(v)+'</option>').join('');
   function exerciseRow(ex,index,items){
-    const rows=setRows(ex),historical=(loadReady()?cache.Carichi:[]).filter(x=>x.data<selectedDate&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id),lastDay=historical.map(x=>x.data).sort().at(-1),past=historical.filter(x=>x.data===lastDay).sort((a,b)=>Number(a.numero_serie)-Number(b.numero_serie));
-    const count=logEngine.workingCount(ex,rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex,selectedDate,items),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
+    const rows=setRows(ex),past=priorRows(ex,items);
+    const count=logEngine.sessionWorkingCount(rows,engine.readSetEffort),complete=count>=ex.sets,manual=checkedExercise(ex,selectedDate,items),status=complete?'done':manual?'manually-checked':rows.length?'started':'todo';
     const names=logEngine.namesFor(ex),key=logKey(selectedDate,ex.id),draft=logDrafts.get(key)||{},last=past.filter(x=>logEngine.unitParts(x.unita_carico)).at(-1),unit=logEngine.unitParts(last?.unita_carico),variant=draft.esercizio||names.find(v=>logEngine.norm(v)===logEngine.norm(last?.esercizio))||names[0],guide=logEngine.guideFor(ex,variant);
-    const restSeconds=restEngine?.recoverySeconds(ex),next=logEngine.nextSet(ex,rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadReady()||future,saveDisabled=future||setSaving;
+    const restSeconds=restEngine?.recoverySeconds(ex),next=logEngine.nextSessionSet(rows),timed=ex.id==='plank'||ex.muscle==='Cardio',future=selectedDate>localDate(),disabled=!connected()||!loadReady()||future,saveDisabled=future||setSaving;
     const val=(k,fallback='')=>h(draft[k]??fallback);
     const dumbbell=/manubr/i.test(variant),barbell=/bilancier/i.test(variant);
     const defaultUnit=dumbbell?'kg per mano':barbell?'kg totale':'kg macchina';
-    const defaultEquipment=dumbbell?'Manubri':barbell?'Bilanciere':'';
+    const defaultEquipment='';
     const feedback=logFeedback.get(key);
     const history=past.length?'<span class="wl-history-date">'+h(past[0].data)+'</span> '+past.map(r=>'<span class="wl-hist" title="'+h(r.unita_carico)+'">'+h(r.esercizio)+' · S'+h(r.numero_serie)+' '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+'<small>'+h(r.unita_carico||'Unità non identificata')+'</small></span>').join(' '):loadedAt?'Nessuna serie precedente':'Storico da caricare';
     const refs=(ex.references||[]).map(r=>'<span class="wl-ref">'+h(r.exercise)+' · '+h(r.unit)+' · palestra '+h(r.gym)+' · '+h(r.equipment)+': '+h(r.reference_kg??'—')+' kg × '+h(r.reference_reps??'—')+(r.conditional_target_reps==null?'':' → '+h(r.conditional_target_reps)+' reps')+'<small>'+h(r.load_increase_allowed?'Incremento minimo solo se tecnica e recupero adeguati.':r.note||'')+'</small></span>').join('');
@@ -402,11 +403,11 @@
     const opened=currentOpen()===ex.id;
     const image=guide?'<img class="wl-photo" src="'+h(guide.frames[0])+'" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">':'';
     const setList=rows.map(r=>'<div class="wl-set-record"><button type="button" class="wl-set-chip" data-wl-edit="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" '+(timed||disabled||!logEngine.unitParts(r.unita_carico)||!logEngine.namesFor(ex).some(v=>logEngine.norm(v)===logEngine.norm(r.esercizio))?'disabled':'')+'>S'+h(r.numero_serie)+' · '+h(r.carico_kg)+' kg × '+h(r.ripetizioni)+' <small>'+h(engine.readSetEffort(r.origine).tipo_serie)+'</small></button><button type="button" class="wl-delete" data-wl-delete="'+h(r.id)+'" data-wl-id="'+h(ex.id)+'" aria-label="Elimina serie '+h(r.numero_serie)+'" '+(disabled?'disabled':'')+'>Elimina</button></div>').join('');
-    return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+(restSeconds?' · Rec. '+restEngine.formatRecovery(restSeconds):'')+'</small><small>Ultimo: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
+    return '<article class="wl-ex wl-'+status+'" data-wl-row="'+h(ex.id)+'"><div class="wl-compact-head"><button type="button" class="wl-row-toggle" data-wl-toggle="'+h(ex.id)+'" aria-expanded="'+opened+'"><span class="wl-thumb">'+image+'</span><span class="wl-name"><strong>'+h(ex.name)+'</strong><small>'+h(ex.dose)+' · '+h(ex.muscle)+(restSeconds?' · Rec. '+restEngine.formatRecovery(restSeconds):'')+'</small><small>Storico: '+compact+'</small></span><span class="wl-status"><b>'+h(timed?(manual?'✓':'—'):Math.min(count,ex.sets)+'/'+ex.sets)+'</b><small>'+h(complete?'Fatto':manual?'Spunta':rows.length?'In corso':'Da fare')+'</small></span><span class="wl-arrow">'+(opened?'⌃':'⌄')+'</span></button><button class="wl-info" type="button" data-wl-info="'+h(ex.id)+'" aria-label="Guida '+h(ex.name)+'">i</button></div>'+
       '<div class="wl-expand" '+(opened?'':'hidden')+'>'+
-      '<div class="wl-comparison"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div><div><span>ULTIMA REGISTRAZIONE</span><div class="wl-history">'+history+(past.length?'<button type="button" class="wl-history-link" data-wl-history-day="'+h(past[0].data)+'">Apri registrazioni di questa data</button>':'')+'</div></div></div>'+
+      '<div class="wl-comparison wl-current-objective"><div><span>OBIETTIVO '+(cache.SchedeConfermate.some(x=>x.data===selectedDate)?'CONFERMATO':'PROGRAMMATO')+'</span><b>'+h(ex.dose)+'</b>'+refs+(!refs&&!timed?'<small>Carico: nessun obiettivo comparabile disponibile</small>':'')+'</div></div>'+
       '<div class="wl-meter" aria-label="Serie allenanti verificate">'+Array.from({length:ex.sets},(_,i)=>'<i class="'+(i<count?'filled':'')+'"></i>').join('')+'</div>'+
-      (setList?'<div class="wl-record-label">Serie registrate · tocca per modificare</div><div class="wl-set-list">'+setList+'</div>':'')+
+      '<section class="wl-current-session"><div class="wl-session-label"><b>Serie di questa seduta</b><small>'+h(selectedDate)+' · '+rows.length+' registrate</small></div>'+(setList?'<div class="wl-set-list">'+setList+'</div>':'<p class="wl-empty-session">'+(loadReady()?'Nessuna serie registrata per questa seduta.':'Caricamento registrazioni…')+'</p>')+'</section>'+
       (timed?'<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future?'disabled':'')+'> Conferma attività svolta (tempo nel diario seduta)</label>':
       '<div class="wl-entry">'+
       '<form novalidate class="wl-set-form" data-wl-form="'+h(ex.id)+'" data-wl-date="'+h(selectedDate)+'" '+(draft.editId?'data-edit-id="'+h(draft.editId)+'"':'')+'><div class="wl-fields">'+
@@ -415,13 +416,13 @@
       '<label>Kg<input name="kg" inputmode="decimal" type="number" min="0" step="any" value="'+val('kg')+'" placeholder="—" required></label>'+
       '<label>Ripetizioni<input name="reps" inputmode="numeric" type="number" min="1" max="100" value="'+val('reps')+'" placeholder="—" required></label>'+
       '</div><div class="wl-fields wl-equipment"><label>Palestra<select name="palestra">'+selectOptions(['A','B'],draft.palestra||unit?.gym||'A')+'</select></label>'+
-      '<label>Attrezzo<input name="attrezzo" required value="'+val('attrezzo',unit?.equipment||defaultEquipment)+'" placeholder="ID / nome macchina"></label>'+
+      '<label>Macchinario (facoltativo)<input name="attrezzo" value="'+val('attrezzo',defaultEquipment)+'" placeholder="Nome / ID, se noto"></label>'+
       '<label>Unità<select name="unita">'+selectOptions(['kg macchina','kg per mano','kg totale'],draft.unita||unit?.type||defaultUnit)+'</select></label>'+
       '<label>Tipo serie<select name="tipo_serie">'+selectOptions(['allenante','riscaldamento','non_specificata'],draft.tipo_serie||'allenante')+'</select></label></div>'+
       '<div class="wl-fields wl-effort"><label>RIR<input name="rir" type="number" min="0" max="10" value="'+val('rir')+'" placeholder="—"></label><label>RPE<input name="rpe" type="number" min="1" max="10" step="0.5" value="'+val('rpe')+'" placeholder="—"></label></div>'+
-      '<div class="wl-actions">'+(last?'<button class="btn btn-quiet" type="button" data-wl-copy="'+h(ex.id)+'">Usa ultima serie</button>':'')+'<button class="btn" type="submit" '+(saveDisabled?'disabled':'')+'>'+(setSaving?'Salvataggio…':'Salva serie')+'</button></div>'+
-      '<p class="wl-save-feedback '+(feedback?.error?'wl-save-error':'')+'" data-wl-feedback role="status">'+(feedback?h(feedback.message):future?'Non puoi registrare una prestazione futura.':!connected()?'Google non collegato. Premi Salva serie per ricollegarti.':loadFailure?h(loadFailure):!loadReady()?'Lo storico sarà verificato al salvataggio.':'Indica carico, ripetizioni e attrezzo. RIR/RPE facoltativi.')+'</p></form></div>'+
-      '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+'</div></article>';
+      '<div class="wl-actions">'+(last?'<button class="btn btn-quiet" type="button" data-wl-copy="'+h(ex.id)+'">Copia valori dallo storico</button>':'')+'<button class="btn" type="submit" '+(saveDisabled?'disabled':'')+'>'+(setSaving?'Salvataggio…':'Salva serie')+'</button></div>'+
+      '<p class="wl-save-feedback '+(feedback?.error?'wl-save-error':'')+'" data-wl-feedback role="status">'+(feedback?h(feedback.message):future?'Non puoi registrare una prestazione futura.':!connected()?'Google non collegato. Premi Salva serie per ricollegarti.':loadFailure?h(loadFailure):!loadReady()?'Lo storico sarà verificato al salvataggio.':'Indica carico e ripetizioni. Macchinario, RIR e RPE facoltativi.')+'</p></form></div>'+
+      '<label class="wl-manual"><input type="checkbox" data-exercise="'+h(ex.id)+'" '+(manual?'checked':'')+' '+(future||complete?'disabled':'')+'> Spunta manuale (non sostituisce le serie verificate)</label>')+'<details class="wl-history-section"><summary>Storico precedente'+(past.length?' · '+h(past[0].data):'')+'</summary><div class="wl-history">'+history+(past.length?'<button type="button" class="wl-history-link" data-wl-history-day="'+h(past[0].data)+'">Apri seduta precedente</button>':'')+'</div></details></div></article>';
   }
   function trainingPanel(){
     const program=programFor(selectedDate),suggest=currentDraft(selectedDate),ex=logExercises(),done=ex.filter(x=>exerciseDone(x,ex)).length;currentOpen(ex);
@@ -433,7 +434,7 @@
   function sessionSummary(ex,done){
     const closed=isDone(selectedDate),ready=ex.length>0&&done===ex.length;
     const metrics=flowEngine.sessionMetrics(trainingFor(selectedDate));
-    const registered=ex.reduce((s,x)=>s+logEngine.workingCount(x,setRows(x),engine.readSetEffort),0);
+    const registered=ex.reduce((s,x)=>s+logEngine.sessionWorkingCount(setRows(x),engine.readSetEffort),0);
     const value=(v,unit)=>v===null?'—':h(fmtN(v,1))+unit;
     const title=closed?'Allenamento concluso':ready?'Esercizi completati':'Riepilogo della seduta';
     const score=closed?window.cut30LevelForDate?.(selectedDate):null,ev=score?.event,labels={improvement:'Miglioramento',maintenance:'Mantenimento',decline:'Calo ripetuto',baseline:'Costanza / riferimento',unknown:'Non valutabile'};
@@ -458,7 +459,7 @@
   function fillLog(ex,rec,edit){
     const row=document.querySelector('[data-wl-row="'+ex.id+'"]'),form=row?.querySelector('form');if(!form||!rec)return;
     const unit=logEngine.unitParts(rec.unita_carico);if(!unit){toast('Storico senza attrezzo identificato: registra un nuovo riferimento.');return;}
-    const effort=engine.readSetEffort(rec.origine),values={esercizio:logEngine.namesFor(ex).find(v=>logEngine.norm(v)===logEngine.norm(rec.esercizio))||rec.esercizio,kg:rec.carico_kg,reps:rec.ripetizioni,palestra:unit.gym,attrezzo:unit.equipment,unita:unit.type,tipo_serie:edit?effort.tipo_serie:'allenante',rir:edit?effort.rir??'':'',rpe:edit?effort.rpe??'':''};
+    const effort=engine.readSetEffort(rec.origine),values={esercizio:logEngine.namesFor(ex).find(v=>logEngine.norm(v)===logEngine.norm(rec.esercizio))||rec.esercizio,kg:rec.carico_kg,reps:rec.ripetizioni,palestra:unit.gym,attrezzo:unit.equipment===logEngine.UNKNOWN_EQUIPMENT?'':unit.equipment,unita:unit.type,tipo_serie:edit?effort.tipo_serie:'allenante',rir:edit?effort.rir??'':'',rpe:edit?effort.rpe??'':''};
     if(edit)values.serie=rec.numero_serie;
     for(const [k,v] of Object.entries(values))if(form.elements[k])form.elements[k].value=v;
     if(edit)form.dataset.editId=rec.id;else delete form.dataset.editId;
@@ -510,8 +511,8 @@
     if(table==='Carichi'&&previous>0&&(!expected||head.some((k,i)=>String(values[previous][i]??'')!==String(expected[k]??''))))throw new Error('Serie già presente o modificata nel cloud: aggiorna prima di correggere.');
     if(table==='Carichi'&&expected&&previous<0)throw new Error('Serie originale non più disponibile: aggiorna il diario.');
     if(table==='Carichi' && previous<0){
-      const conflict=values.find((r,i)=>i>0 && String(r[1])===rec.data &&
-        slug(String(r[3]||''))===slug(rec.esercizio) && Number(r[4])===rec.numero_serie);
+      const items=WORKOUTS[rec.programma]||[],resolved=muscleEngine.resolveExercise(rec.esercizio,items);
+      const conflict=values.find((r,i)=>i>0 && String(r[1])===rec.data && String(r[2])===rec.programma && Number(r[4])===rec.numero_serie && (resolved?muscleEngine.resolveExercise(r[3],items)?.id===resolved.id:slug(String(r[3]||''))===slug(rec.esercizio)));
       if(conflict)throw new Error('Questa serie risulta già presente (ID '+String(conflict[0])+'). Evito il duplicato: correggi quella registrazione o richiedi una seconda sessione.');
     }
     const body={values:[head.map(k=>rec[k]??'')]};
@@ -539,20 +540,20 @@
     const data=new FormData(form),exercise=String(data.get('esercizio')||'').trim();
     const number=Number(data.get('serie')),kg=Number(data.get('kg')),reps=Number(data.get('reps'));
     if(!logEngine.namesFor(ex).includes(exercise)||String(data.get('kg')??'').trim()===''||!Number.isInteger(number)||number<1||number>25||!Number.isFinite(kg)||kg<0||!Number.isInteger(reps)||reps<1||reps>100)throw Error('Serie/carico/ripetizioni non validi.');
-    const gym=String(data.get('palestra')),eq=String(data.get('attrezzo')||'').trim(),type=String(data.get('unita'));
-    if(!eq||!['A','B'].includes(gym)||!['kg macchina','kg per mano','kg totale'].includes(type))throw Error('Indica palestra, attrezzo e unità.');
+    const gym=String(data.get('palestra')),eq=String(data.get('attrezzo')||'').trim()||logEngine.UNKNOWN_EQUIPMENT,type=String(data.get('unita'));
+    if(!['A','B'].includes(gym)||!['kg macchina','kg per mano','kg totale'].includes(type)||eq.includes('|'))throw Error('Verifica palestra e unità. Il nome del macchinario è facoltativo e non può contenere |.');
     const unit=type+' | palestra '+gym+' | attrezzo '+eq;
     const sheet=state.prefs.sheetId;
-    const canonical='s-'+date.replaceAll('-','')+'-'+slug(exercise)+'-'+slug(gym+'-'+eq)+'-'+number;
+    const canonical='s-'+date.replaceAll('-','')+'-'+slug(program)+'-'+ex.id+'-'+number;
     setSaving=true;loadEpoch++;
     try{
     publishLoads(await readLoadRows(),sheet);
     if(date!==selectedDate)throw Error('Data cambiata durante il salvataggio. Riprova dalla scheda corretta.');
-    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort),wasDone=exerciseDone(ex);
+    const before=logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort),wasDone=exerciseDone(ex);
     const existing=cache.Carichi.find(x=>x.id===form.dataset.editId);
     if(form.dataset.editId&&!existing)throw Error('La serie da modificare non esiste più. Aggiorna la scheda.');
     if(existing&&(existing.data!==date||logEngine.norm(existing.esercizio)!==logEngine.norm(exercise)||Number(existing.numero_serie)!==number||existing.unita_carico!==unit))throw Error('Per correggere una serie mantieni variante, palestra, attrezzo e numero originali.');
-    const same=cache.Carichi.find(x=>x.id===canonical);
+    const same=setRows(ex).find(x=>Number(x.numero_serie)===number)||cache.Carichi.find(x=>x.id===canonical);
     if(!existing&&same){if(currentPage==='training')render();throw Error('Serie già presente: seleziona la serie registrata per modificarla.');}
     if(existing&&!confirm('Confermi la correzione della serie '+number+'?')){showSetFeedback(form,'Modifica annullata');return;}
     const rec={id:existing?.id||canonical,data:date,programma:program,esercizio:existing?.esercizio||exercise,numero_serie:number,carico_kg:kg,ripetizioni:reps,unita_carico:unit,
@@ -560,9 +561,9 @@
       const saved=await saveRow('Carichi',rec,existing||null);
       if(sheet!==state.prefs.sheetId)throw Error('Diario cambiato: verifica il salvataggio sul diario originale.');
       publishLoads(parseTable(saved.allRows),sheet);
-      const after=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&x.programma===program),engine.readSetEffort);
+      const after=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,WORKOUTS[program]||[]),engine.readSetEffort);
       if(after>=ex.sets||before>=ex.sets&&after<ex.sets)upsert('Esercizi',{id:'e-'+date+'-'+ex.id,data:date,programma:program,esercizio:ex.id,completato:after>=ex.sets?'true':'false',updated_at:now()});
-      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
+      const key=logKey(date,ex.id);logDrafts.set(key,{esercizio:exercise,palestra:gym,attrezzo:eq===logEngine.UNKNOWN_EQUIPMENT?'':eq,unita:type,tipo_serie:data.get('tipo_serie'),kg,reps});logFeedback.set(key,{message:'Serie '+number+' salvata e verificata.'});const advanced=!wasDone&&after>=ex.sets&&before<ex.sets&&date===selectedDate&&advanceOpen(date,ex.id,logItems());
       try{if(restEngine&&date===selectedDate&&restEngine.shouldStartRecovery({date,today:localDate(),editing:!!existing,verified:true,hasNext:after<ex.sets||(date===selectedDate&&logItems().some(x=>x.id!==ex.id&&!x.done)),exercise:ex}))beginRest(ex,rec);
       else if(!existing&&date===localDate())stopRest();}catch(err){console.warn('Timer non disponibile:',err);}
       setSaving=false;toast('Serie salvata e verificata sul Google Sheet privato');render();if(advanced)requestAnimationFrame(()=>revealNext(date));
@@ -575,14 +576,14 @@
     const rec=ex&&setRows(ex).find(x=>String(x.id)===id);
     if(!rec||!connected()||!loadReady()||date>localDate())throw Error('Registrazione non disponibile o connessione scaduta');
     if(!confirm('Eliminare definitivamente '+rec.esercizio+' · serie '+rec.numero_serie+' ('+rec.carico_kg+' kg × '+rec.ripetizioni+') del '+date+'?'))return;
-    const before=logEngine.workingCount(ex,setRows(ex),engine.readSetEffort);
+    const before=logEngine.sessionWorkingCount(setRows(ex),engine.readSetEffort);
     const assertSource=()=>{if(sheet!==state.prefs.sheetId||!connected())throw Error('Diario o autorizzazione cambiati');};
     setSaving=true;loadEpoch++;
     try{
-      const mod=await import('./engine/delete-record.mjs?v=3.7.3');
+      const mod=await import('./engine/delete-record.mjs?v=3.7.4');
       const after=await mod.deleteVerified({api:googleApi,assertSource,table:'Carichi',headers:headers.Carichi,expected:rec});
       assertSource();if(restTimer?.recordId===id)stopRest();publishLoads(parseTable(after),sheet);
-      const remaining=logEngine.workingCount(ex,cache.Carichi.filter(x=>x.data===date&&(!x.programma||x.programma===program)),engine.readSetEffort);
+      const remaining=logEngine.sessionWorkingCount(logEngine.sessionRows(ex,cache.Carichi,date,program,items),engine.readSetEffort);
       if(before>=ex.sets&&remaining<ex.sets){
         // Revoke all matching completion flags, including historical aliases, not other exercises.
         const matching=state.tables.Esercizi.filter(x=>x.data===date&&x.programma===program&&muscleEngine.resolveExercise(x.esercizio,items)?.id===ex.id&&String(x.completato).toLowerCase()==='true');
@@ -691,13 +692,13 @@
     if(e.target.closest('[data-rest-add]')){if(restTimer){restTimer=restEngine.extendRecovery(restTimer,Date.now(),30);restAlerted=false;paintRest();holdRestWake();}return;}
     if(e.target.closest('[data-rest-audio]')){unlockRestAudio().then(ok=>{if(ok)playRestSound();paintRest();});return;}
     const del=e.target.closest('[data-wl-delete]');if(del){e.preventDefault();deleteSet(del.dataset.wlDelete,del.dataset.wlId).catch(err=>toast('Eliminazione serie: '+err.message));return;}
-    const history=e.target.closest('[data-wl-history-day]');if(history){selectedDate=history.dataset.wlHistoryDay;render();return;}
+    const history=e.target.closest('[data-wl-history-day]');if(history){if(setSaving)return;selectedDate=history.dataset.wlHistoryDay;render();return;}
     const toggle=e.target.closest('[data-wl-toggle]');if(toggle){openManual.add(selectedDate);setOpen(selectedDate,flowEngine.toggleOpen(currentOpen(),toggle.dataset.wlToggle));render();return;}
     if(e.target.closest('[data-wl-session-data]')){document.querySelector('#training-form')?.scrollIntoView({behavior:'smooth',block:'start'});return;}
     const close=e.target.closest('[data-wl-close]');if(close){closeGuide();return;}
     const info=e.target.closest('[data-wl-info]');if(info){const ex=logExercises().find(x=>x.id===info.dataset.wlInfo);if(ex)openGuide(ex);return;}
     const edit=e.target.closest('[data-wl-edit]');if(edit){const ex=logExercises().find(x=>x.id===edit.dataset.wlId);if(ex)fillLog(ex,cache.Carichi.find(x=>x.id===edit.dataset.wlEdit),true);return;}
-    const copy=e.target.closest('[data-wl-copy]');if(copy){const ex=logExercises().find(x=>x.id===copy.dataset.wlCopy);if(ex)fillLog(ex,logEngine.latestSession(ex,cache.Carichi,selectedDate).filter(r=>logEngine.unitParts(r.unita_carico)).at(-1),false);return;}
+    const copy=e.target.closest('[data-wl-copy]');if(copy){const ex=logExercises().find(x=>x.id===copy.dataset.wlCopy);if(ex)fillLog(ex,priorRows(ex).filter(r=>logEngine.unitParts(r.unita_carico)).at(-1),false);return;}
     if(e.target.closest('[data-cut30-save-audit]')){e.preventDefault();saveAudit().catch(err=>toast('Audit: '+err.message));return;}
     if(e.target.closest('[data-cut30-confirm-plan]')){e.preventDefault();confirmPlan().catch(err=>toast('Conferma scheda: '+err.message));return;}
     if(e.target.closest('[data-cut30-refresh]')){e.preventDefault();refreshCloud();return;}
@@ -722,7 +723,7 @@
       [engine,recipeEngine,cardioEngine,learningEngine,planEngine,auditEngine]=await Promise.all([import('./engine/cut30.mjs'),import('./engine/recipes.mjs'),import('./engine/cardio-segments.mjs'),import('./engine/learning.mjs'),import('./engine/training-plan.mjs'),import('./engine/performance-audit.mjs')]);
       window.cut30RefreshPerformance=()=>loadCardio().then(()=>render()).catch(()=>{});
       [logEngine,flowEngine,muscleEngine]=await Promise.all([import('./engine/workout-log.mjs'),import('./engine/fitness-p0.mjs'),import('./engine/muscle-coverage.mjs')]);
-      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.3');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
+      try{restEngine=await import('./engine/rest-timer.mjs?v=3.7.4');restNode();setInterval(tickRest,250);document.addEventListener('visibilitychange',()=>{tickRest();if(document.visibilityState==='visible')holdRestWake();});}catch(err){console.warn('CUT30 timer recupero non disponibile',err);}
       const originalRender=render;
       render=function(){const result=originalRender();if(result!==false)renderAddon();if(restEngine)paintRest();return result;};
       document.addEventListener('submit',onSubmit,true);

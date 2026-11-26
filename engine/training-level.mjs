@@ -22,7 +22,7 @@ function strengthRows(raw){
   if(!dayOK(r.data))continue;
   const u=unitParts(r.unita_carico),eff=readSetEffort(r.origine),kg=n(r.carico_kg),reps=n(r.ripetizioni),set=n(r.numero_serie);
   // Assisted loads have the opposite direction. Bodyweight and untagged legacy sets are not comparable.
-  if(!u||!['kg macchina','kg per mano','kg totale'].includes(u.type)||!u.equipment.trim()||!r.esercizio||/assist|elastico|band|contrappeso/i.test(r.esercizio+' '+u.equipment)||eff.tipo_serie!=='allenante'||kg===null||kg<=0||!Number.isInteger(reps)||reps<3||reps>15||!Number.isInteger(set)||set<1)continue;
+  if(!u||!['kg macchina','kg per mano','kg totale'].includes(u.type)||!u.equipment.trim()||/^(non identificato|non specificato|corpo libero)$/i.test(u.equipment.trim())||!r.esercizio||/assist|elastico|band|contrappeso/i.test(r.esercizio+' '+u.equipment)||eff.tipo_serie!=='allenante'||kg===null||kg<=0||!Number.isInteger(reps)||reps<3||reps>15||!Number.isInteger(set)||set<1)continue;
   const key=JSON.stringify([r.data,norm(r.programma),norm(r.esercizio),norm(u.type),norm(u.gym),norm(u.equipment),set]);
   const entry={date:r.data,program:r.programma,exercise:norm(r.esercizio),key:JSON.stringify([norm(r.programma),norm(r.esercizio),norm(u.type),norm(u.gym),norm(u.equipment),set]),kg,reps,rir:eff.rir,rpe:eff.rpe};
   if(!logical.has(key))logical.set(key,[]);logical.get(key).push(entry);
