@@ -36,7 +36,8 @@ test('PWA loads addon without making the existing Sheets schema public',()=>{
   const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
   const script=readFileSync(new URL('../cut30-engine-bridge.js',import.meta.url),'utf8');
   assert.ok(html.includes('cut30-engine-bridge.js'));
-  assert.ok(script.includes("saveRow('Carichi',rec)"));
+  assert.ok(script.includes("saveRow('Carichi',rec,existing||null)"));
+  assert.ok(script.includes("head.some((k,i)=>String(values[previous][i]??'')!==String(expected[k]??''))"));
   assert.ok(script.includes("saveRow('Nutrizione',rec)"));
   assert.ok(!script.includes('private_key'));
 });
