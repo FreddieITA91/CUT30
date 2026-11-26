@@ -251,11 +251,11 @@
   function calibrationPanel(xp){
     const options=[['restart','5','Ripresa / principiante','Attività occasionale, ripresa dopo una pausa o nuova routine.'],['regular','20','Allenamento regolare','Routine stabile, circa 2–3 sedute alla settimana da alcuni mesi.'],['experienced','35','Allenamento strutturato','Programma seguito con continuità, carichi e cardio monitorati.'],['advanced','50','Esperienza avanzata','Allenamento strutturato da anni, con progressioni e recupero pianificati.']];
     const profile=xp.profile||{},saved=xp.baseline;
-    return '<section class="cx-card fit-calibration"><h2>Profilo di partenza</h2><p class="fit-caption">Riferimenti degli ultimi 28 giorni (non un test atletico).</p><div class="fit-cal-grid"><div><b>'+ (profile.sessions28??0)+'</b><small>Sedute</small></div><div><b>'+ (profile.weeks28??0)+'/4</b><small>Settimane attive</small></div><div><b>'+ (xp.loadAvailable?profile.strengthExercises??0:'—')+'</b><small>Esercizi confrontabili*</small></div><div><b>'+ (xp.cardioAvailable?profile.cardioSessions??0:'—')+'</b><small>Sedute cardio con riferimenti*</small></div></div>'+
+    return '<section class="cx-card fit-calibration"><h2>Profilo di partenza</h2><p class="fit-caption">Riferimenti degli ultimi 28 giorni (non un test atletico).</p><div class="fit-cal-grid"><div><b>'+ (profile.sessions28??0)+'</b><small>Sedute</small></div><div><b>'+ (profile.weeks28??0)+'/4</b><small>Settimane attive</small></div><div><b>'+ (xp.loadAvailable?profile.strengthExercises??0:'—')+'</b><small>Esercizi con riferimenti*</small></div><div><b>'+ (xp.cardioAvailable?profile.cardioSessions??0:'—')+'</b><small>Sedute cardio con riferimenti*</small></div></div>'+
       '<p class="fit-caption">* Serie classificate con sforzo registrato e attrezzo identificato; cardio con durata, distanza e FC. Non sono percentili di popolazione.</p>'+
       (saved?'<p>Profilo confermato: <strong>'+h(saved.label)+' · LVL '+saved.level+'</strong> ('+h(saved.date)+').</p><details><summary>Modifica profilo</summary>':'<p>Scegli il profilo che descrive l’esperienza già acquisita, anche prima di CUT30.</p>')+
       '<form id="fit-cal-form" class="fit-cal-form">'+options.map(([id,l,label,desc])=>'<label class="fit-cal-option"><input type="radio" name="profile" value="'+id+'" '+(saved?.profile===id?'checked':'')+' required><span><b>'+label+' · LVL '+l+'</b><small>'+desc+'</small></span></label>').join('')+'<button type="submit" class="btn">Conferma profilo iniziale</button></form>'+
-      (saved?'</details>':'')+'<p class="fit-caption">Scala di gioco convenzionale e autodichiarata: nessun livello certifica la forma fisica. Gli XP già registrati si aggiungono al profilo, senza assegnarli due volte.</p></section>';
+      (saved?'</details>':'')+'<p class="fit-caption">Scala di gioco convenzionale e autodichiarata: nessun livello certifica la forma fisica. Gli XP già registrati si aggiungono al profilo, senza assegnarli due volte. Le valutazioni storiche sono ricostruite con il profilo attuale; dopo la calibrazione il livello può anche scendere sotto quello iniziale.</p></section>';
   }
   function xpHistory(xp){
     const events=xp.events||[];if(!events.length)return '<p class="fit-caption">Il grafico sarà disponibile dopo la prima seduta registrata.</p>';
@@ -272,20 +272,22 @@
     try{
       // Fresh reads, not stale browser evidence. The core diary must already be synchronized.
       if(interactive){
-        await refreshCloud(true);await loadMuscleHistory({force:true});await window.cut30RefreshPerformance?.();
+        await sync();
+        if(!state.lastSync||Date.parse(state.lastSync)<stamp||state.dirtyConfig?.length)throw Error('Sincronizzazione del diario non verificata');
+        await loadMuscleHistory({force:true});await window.cut30RefreshPerformance?.();
       }else{
         await loadMuscleHistory({force:true});await window.cut30RefreshPerformance?.();
       }
       assertSource();
       const xp=makeXp();
-      if(!xp||xp.provisional||!xp.calibrated||loadEvidence.sheetId!==sheet||cardioEvidence.sheetId!==sheet||loadEvidence.at<stamp||cardioEvidence.at<stamp||!state.lastSync||Date.parse(state.lastSync)<stamp-120000){
+      if(!xp||xp.provisional||!xp.calibrated||loadEvidence.sheetId!==sheet||cardioEvidence.sheetId!==sheet||loadEvidence.at<stamp||cardioEvidence.at<stamp||!state.lastSync||Date.parse(state.lastSync)<stamp-120000||state.dirtyConfig?.length){
         if(interactive)toast('Archivio non aggiornato: sincronizza il diario, conferma il profilo e riprova');return;
       }
       const mod=await import('./engine/experience-ledger.mjs?v=3.7.0');
       const result=await mod.archiveExperience({api:googleApi,assertSource,xp,at:new Date().toISOString()});
       xpArchiveState={sheet,at:Date.now(),inserted:result.inserted};if(interactive)toast('Esperienza verificata: '+result.inserted+' nuove valutazioni');
     }catch(err){if(interactive)toast('Archivio esperienza: '+err.message);else console.warn('CUT30 experience archive:',err.message);}
-    finally{xpArchiveBusy=false;if(interactive&&currentPage==='progress')render();}
+    finally{xpArchiveBusy=false;if(currentPage==='progress')render();}
   }
   window.cut30ArchiveExperience=()=>saveExperienceArchive(false);
   function xpCard(){
@@ -294,7 +296,7 @@
     return calibrationPanel(xp)+'<section class="cx-card fit-level-detail"><div class="cx-head"><div><h2>Progressione personale</h2><span class="fit-caption">Livello '+(xp.calibrated?xp.level:'da calibrare')+' / 100 · '+xp.total+' XP</span></div></div>'+
      (xp.provisional?'<p class="ms-warning">Dati parziali: il livello può variare quando si caricano Carichi e segmenti cardio.</p><button type="button" class="btn btn-quiet" data-cut-refresh>↻ Aggiorna storico</button>':'')+
      '<div class="fit-level-rules">'+[['improvement',35],['maintenance',10],['decline',-15],['baseline',5],['unknown',0]].map(([k,v])=>'<div><span>'+outcomes[k]+'</span><b class="xp-'+k+'">'+signedXp(v)+'</b></div>').join('')+'</div>'+
-     xpHistory(xp)+'<div class="fit-archive"><button type="button" class="btn btn-quiet" data-xp-archive '+(!xp.calibrated||xp.provisional||xpArchiveBusy?'disabled':'')+'>Archivia valutazioni su Google Sheets</button><p class="fit-caption">'+(xpArchiveState?.sheet===state.prefs?.sheetId?'Ultima verifica '+new Date(xpArchiveState.at).toLocaleString('it-IT')+' · '+xpArchiveState.inserted+' nuove revisioni.':'Registro separato Esperienza: nuove revisioni, nessuna sovrascrittura.')+'</p></div><h3>Ultime sedute</h3>'+(recent.length?recent.map(e=>'<details class="fit-xp-event"><summary><span><b>'+h(e.program)+'</b><small>'+h(e.date)+' · '+outcomes[e.outcome]+'</small></span><strong class="xp-'+e.outcome+'">'+signedXp(e.applied)+'</strong></summary><p>Livello dopo la seduta: '+(e.level??'da calibrare')+'. '+(e.evidence.length?'Confronti omogenei:':'Nessun confronto omogeneo disponibile.')+'</p>'+e.evidence.map(v=>'<p>'+h(v.exercise)+' · '+h(v.domain)+' · '+h(v.trend==='up'?'Migliora':v.trend==='down'?'Calo ripetuto':v.trend==='flat'?'Stabile':'Incerto')+' · '+(v.change>0?'+':'')+v.change+'% ('+v.comparisons+' confronti)</p>').join('')+'</details>').join(''):'<p class="fit-caption">Nessuna seduta conclusa con dati utilizzabili.</p>')+
+     xpHistory(xp)+'<div class="fit-archive"><button type="button" class="btn btn-quiet" data-xp-archive '+(!xp.calibrated||xp.provisional||xpArchiveBusy?'disabled':'')+'>Archivia valutazioni su Google Sheets</button><p class="fit-caption">'+(xpArchiveState&&xpArchiveState.sheet===state.prefs?.sheetId?'Ultima verifica '+new Date(xpArchiveState.at).toLocaleString('it-IT')+' · '+xpArchiveState.inserted+' nuove revisioni.':'Registro separato Esperienza: nuove revisioni, nessuna sovrascrittura.')+'</p></div><h3>Ultime sedute</h3>'+(recent.length?recent.map(e=>'<details class="fit-xp-event"><summary><span><b>'+h(e.program)+'</b><small>'+h(e.date)+' · '+outcomes[e.outcome]+'</small></span><strong class="xp-'+e.outcome+'">'+signedXp(e.applied)+'</strong></summary><p>Livello dopo la seduta: '+(e.level??'da calibrare')+'. '+(e.evidence.length?'Confronti omogenei:':'Nessun confronto omogeneo disponibile.')+'</p>'+e.evidence.map(v=>'<p>'+h(v.exercise)+' · '+h(v.domain)+' · '+h(v.trend==='up'?'Migliora':v.trend==='down'?'Calo ripetuto':v.trend==='flat'?'Stabile':'Incerto')+' · '+(v.change>0?'+':'')+v.change+'% ('+v.comparisons+' confronti)</p>').join('')+'</details>').join(''):'<p class="fit-caption">Nessuna seduta conclusa con dati utilizzabili.</p>')+
      '<details class="fit-level-method"><summary>Come viene calcolato</summary><p>La scala 1–100 misura la progressione nel programma CUT30, non la forma fisica assoluta. Il profilo iniziale è confermato dall’utente; 100 non certifica lo status di atleta. Il costo del livello aumenta da 100 XP di 10 XP per livello. Lo storico viene ricalcolato senza bonus ripetuti.</p><p>Forza: stesso esercizio, attrezzo, palestra, unità, numero serie e sforzo comparabile (RIR/RPE); più carico senza meno ripetizioni, oppure più ripetizioni a pari carico. Cardio: tapis o piscina, stesso tipo e segmento, durata e frequenza media simili, pendenza comparabile sul tapis; confronto indicativo, non VO₂max. Miglioramento almeno 3% di carico/ritmo o una ripetizione in più; calo almeno 5% o due ripetizioni in meno a pari carico, per due confronti consecutivi. Esito della seduta per maggioranza dei confronti per esercizio. Dati mancanti o esiti discordanti non generano penalità. Recupero programmato, peso, BMI e kcal non assegnano XP.</p></details></section>';
   }
   renderProgress=function(){
